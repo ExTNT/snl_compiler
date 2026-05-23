@@ -2,60 +2,53 @@
 
 ## 1. 整体架构
 
-```
-SNL 源程序 (.snl)
-    │
-    ▼
-┌─────────────────┐
-│词法分析 (Lexer) │  →  Token 序列 ──→ token.md
-└─────────────────┘
-    │
-    ▼
-┌─────────────────┐
-│语法分析 (Parser)│  →  抽象语法树 ──→ tree.md
-│递归下降 + LL(1) │
-└─────────────────┘
-    │
-    ▼
-┌─────────────────┐
-│ 语义分析        │  →  符号表 ────→ table.md
-│  (Semantic)     │  →  语义错误信息
-└─────────────────┘
-    │
-    ▼
-┌─────────────────┐
-│ 代码生成        │  →  MIPS 汇编 (.asm)
-│ (Codegen)       │
-└─────────────────┘
+```mermaid
+flowchart TD
+    SRC["SNL 源程序 (.snl)"]
+    LEX["<b>词法分析 (Lexer)</b>"]
+    PARSE["<b>语法分析 (Parser)</b><br/>递归下降 + LL(1)"]
+    SEM["<b>语义分析 (Semantic)</b>"]
+    CG["<b>代码生成 (Codegen)</b>"]
+
+    TOKEN["token.md"]
+    TREE["tree.md"]
+    TABLE["table.md"]
+    ASM["MIPS 汇编 (.asm)"]
+
+    SRC --> LEX
+    LEX -->|"Token 序列"| PARSE
+    PARSE -->|"抽象语法树"| SEM
+    SEM -->|"符号表"| CG
+    CG -->|"MIPS 汇编"| ASM
+
+    LEX -.-> TOKEN
+    PARSE -.-> TREE
+    SEM -.-> TABLE
+    SEM -.->|"语义错误信息"| ERR["语义错误信息"]
 ```
 
 四个阶段均生成诊断输出 Markdown 文件，便于分步检查编译中间结果。
 
 ## 2. 主程序流程 (main.rs)
 
-```
-开始
-  │
-  ▼
-读取 .snl 源文件
-  │
-  ▼
-Phase 1: 词法分析 ──→ 输出 token.md
-  │ 有错误? ──→ 打印错误并退出
-  │ 通过
-  ▼
-Phase 2: 语法分析 (递归下降) ──→ 输出 tree.md
-  │ 有错误? ──→ 打印错误
-  │ (语法错误不阻止后续阶段)
-  ▼
-Phase 3: 语义分析 (两遍遍历) ──→ 输出 table.md
-  │ 有错误? ──→ 打印错误并退出
-  │ 通过
-  ▼
-Phase 4: MIPS 代码生成
-  │
-  ▼
-写入 .asm 文件
+```mermaid
+flowchart TD
+    START([开始]) --> READ[读取 .snl 源文件]
+    READ --> P1["Phase 1: 词法分析"]
+    P1 --> P1_OUT[输出 token.md]
+    P1_OUT --> P1_ERR{有错误?}
+    P1_ERR -->|是| EXIT1[打印错误并退出]
+    P1_ERR -->|通过| P2["Phase 2: 语法分析 (递归下降)"]
+    P2 --> P2_OUT[输出 tree.md]
+    P2_OUT --> P2_ERR{有错误?}
+    P2_ERR -->|是| PRINT[打印错误]
+    P2_ERR -->|否| P3["Phase 3: 语义分析 (两遍遍历)"]
+    PRINT --> P3
+    P3 --> P3_OUT[输出 table.md]
+    P3_OUT --> P3_ERR{有错误?}
+    P3_ERR -->|是| EXIT2[打印错误并退出]
+    P3_ERR -->|通过| P4["Phase 4: MIPS 代码生成"]
+    P4 --> WRITE[写入 .asm 文件]
 ```
 
 ## 3. 词法分析模块 (src/lexer/)
@@ -63,8 +56,9 @@ Phase 4: MIPS 代码生成
 **输入**: SNL 源程序字符串
 **输出**: Token 序列
 
-```
-源程序字符串 → DFA 状态机 → Token 序列 → 关键字检查
+```mermaid
+flowchart LR
+    SRC[源程序字符串] --> DFA[DFA 状态机] --> TOKENS[Token 序列] --> KW[关键字检查]
 ```
 
 **DFA 状态转换**:
@@ -90,25 +84,27 @@ Phase 4: MIPS 代码生成
 **输入**: Token 序列
 **输出**: 抽象语法树 (AST) + 语法错误信息
 
-```
-Token 序列 → parse_program
-              ├── parse_declare_part
-              │   ├── parse_type_dec    (类型声明)
-              │   ├── parse_var_dec     (变量声明)
-              │   └── parse_proc_dec    (过程声明, 递归)
-              └── parse_program_body
-                  └── parse_stm_list
-                      ├── parse_if_stm
-                      ├── parse_while_stm
-                      ├── parse_read / parse_write
-                      ├── parse_return_stm
-                      ├── parse_assign_or_call
-                      └── parse_exp (递归下降处理优先级)
+```mermaid
+flowchart TD
+    TOKENS["Token 序列"] --> PP["parse_program"]
+    PP --> PDP["parse_declare_part"]
+    PDP --> PTD["parse_type_dec<br/>(类型声明)"]
+    PDP --> PVD["parse_var_dec<br/>(变量声明)"]
+    PDP --> PPD["parse_proc_dec<br/>(过程声明, 递归)"]
+    PP --> PPB["parse_program_body"]
+    PPB --> PSL["parse_stm_list"]
+    PSL --> PIF["parse_if_stm"]
+    PSL --> PW["parse_while_stm"]
+    PSL --> PRW["parse_read / parse_write"]
+    PSL --> PRET["parse_return_stm"]
+    PSL --> PAC["parse_assign_or_call"]
+    PSL --> PE["parse_exp<br/>(递归下降处理优先级)"]
 ```
 
 **表达式优先级** (由松到紧):
-```
-RelExp (<, =)  >  Exp (+, -)  >  Term (*, /)  >  Factor (常量/变量/括号)
+```mermaid
+flowchart LR
+    RE["RelExp (&lt;, =)"] --> EXP["Exp (+, -)"] --> TERM["Term (*, /)"] --> FAC["Factor (常量/变量/括号)"]
 ```
 
 **恐慌模式错误恢复**: 遇到语法错误时跳过 Token 直到同步符号 (`;`, `end`, `fi`, `endwh`)
@@ -118,9 +114,11 @@ RelExp (<, =)  >  Exp (+, -)  >  Term (*, /)  >  Factor (常量/变量/括号)
 **输入**: Token 序列
 **输出**: 语法错误检查信息
 
-```
-文法定义 (grammar.rs) → FIRST/FOLLOW 计算 (first_follow.rs)
-    → 分析表构建 (parse_table.rs) → 表驱动解析 (ll1.rs)
+```mermaid
+flowchart LR
+    G["文法定义<br/>(grammar.rs)"] --> FF["FIRST/FOLLOW 计算<br/>(first_follow.rs)"]
+    FF --> PT["分析表构建<br/>(parse_table.rs)"]
+    PT --> LL1["表驱动解析<br/>(ll1.rs)"]
 ```
 
 **文法规模**: ~70 条产生式, 40+ 个非终结符
@@ -134,25 +132,25 @@ RelExp (<, =)  >  Exp (+, -)  >  Term (*, /)  >  Factor (常量/变量/括号)
 
 **两遍遍历**:
 
-```
-AST → 第一遍: 符号表构建
-       ├── 全局作用域: 类型名、全局变量、过程名
-       ├── 进入过程体: 压入新作用域 (嵌套层级 +1)
-       └── 退出过程体: 弹出作用域 (快照保存)
-
-    → 第二遍: 语义检查
-       ├── 1.  标识符重复定义
-       ├── 2.  无声明的标识符
-       ├── 3.  标识符类别错误
-       ├── 4.  数组下标越界
-       ├── 5.  数组成员/域变量引用不合法
-       ├── 6.  赋值类型不兼容
-       ├── 7.  赋值左端非变量
-       ├── 8.  形实参类型不匹配
-       ├── 9.  形实参个数不相同
-       ├── 10. 非过程标识符调用
-       ├── 11. 条件表达式非整型
-       └── 12. 运算符分量类型不兼容
+```mermaid
+flowchart TD
+    AST["AST"] --> PASS1["第一遍: 符号表构建"]
+    PASS1 --> GLOBAL["全局作用域: 类型名、全局变量、过程名"]
+    PASS1 --> ENTER["进入过程体: 压入新作用域 (嵌套层级 +1)"]
+    PASS1 --> EXIT["退出过程体: 弹出作用域 (快照保存)"]
+    AST --> PASS2["第二遍: 语义检查"]
+    PASS2 --> E1["1. 标识符重复定义"]
+    PASS2 --> E2["2. 无声明的标识符"]
+    PASS2 --> E3["3. 标识符类别错误"]
+    PASS2 --> E4["4. 数组下标越界"]
+    PASS2 --> E5["5. 数组成员/域变量引用不合法"]
+    PASS2 --> E6["6. 赋值类型不兼容"]
+    PASS2 --> E7["7. 赋值左端非变量"]
+    PASS2 --> E8["8. 形实参类型不匹配"]
+    PASS2 --> E9["9. 形实参个数不相同"]
+    PASS2 --> E10["10. 非过程标识符调用"]
+    PASS2 --> E11["11. 条件表达式非整型"]
+    PASS2 --> E12["12. 运算符分量类型不兼容"]
 ```
 
 **作用域快照**: 每次 `exit_scope()` 前克隆当前作用域，保存到 `scope_snapshots` 列表中，用于诊断输出。
@@ -180,22 +178,23 @@ AST → 第一遍: 符号表构建
 
 ### 6.2 总体流程
 
-```
-Program AST
-  ├── 生成 .data 段
-  │   ├── 全局变量: var_X: .word 0 (4字节) 或 .space N (数组/记录)
-  │   └── 换行串: newline: .asciiz "\n"
-  ├── 生成 main 过程
-  │   ├── 序言: 保存 $ra, 设置 $fp, 分配局部变量
-  │   ├── 编译语句体
-  │   └── 尾声: exit syscall (v0=10)
-  └── 编译所有 procedure
-      ├── 序言: 保存 old $fp + $ra, 设置 $fp, 分配局部变量
-      ├── 合并局部类型别名 (局部覆盖外层)
-      ├── 分配参数 (在调用者栈帧中, $fp 上方)
-      ├── 编译语句体
-      ├── 递归编译嵌套过程
-      └── 尾声: 释放局部变量, 恢复 $fp/$ra, jr $ra
+```mermaid
+flowchart TD
+    PROG["Program AST"]
+    PROG --> DATA[".data 段"]
+    DATA --> DATA_GV["全局变量: var_X: .word 0 / .space N"]
+    DATA --> DATA_NL["换行串: newline: .asciiz '\n'"]
+    PROG --> MAIN["main 过程"]
+    MAIN --> MAIN_P["序言: 保存 $ra, 设置 $fp, 分配局部变量"]
+    MAIN --> MAIN_B["编译语句体"]
+    MAIN --> MAIN_E["尾声: exit syscall (v0=10)"]
+    PROG --> PROC["所有 procedure"]
+    PROC --> PROC_P["序言: 保存 $fp + $ra, 设置 $fp, 分配局部变量"]
+    PROC --> PROC_A["合并局部类型别名 (局部覆盖外层)"]
+    PROC --> PROC_PARAM["分配参数 (调用者栈帧, $fp 上方)"]
+    PROC --> PROC_B["编译语句体"]
+    PROC --> PROC_R["递归编译嵌套过程"]
+    PROC --> PROC_E["尾声: 释放局部变量, 恢复 $fp/$ra, jr $ra"]
 ```
 
 ### 6.3 MIPS 栈帧布局
@@ -221,21 +220,25 @@ procedure 栈帧:
 
 ### 6.5 表达式编译
 
+```mermaid
+flowchart TD
+    subgraph BinOp["二元运算"]
+        R["编译右操作数 → $v0"] --> PUSH["push $v0 到栈"]
+        PUSH --> L["编译左操作数 → $v0"]
+        L --> POP["pop 到 $t0"]
+        POP --> EXEC["执行运算: $v0 = $v0 op $t0"]
+    end
+    subgraph VarAccess["变量访问 (含选择器)"]
+        SIMPLE["简单变量"] --> LOAD["emit_load (直接 lw/lb)"]
+        COMPLEX["有下标/字段"] --> EVA["emit_var_address → $t0"]
+        EVA --> LOAD2["lw/lb $v0, 0($t0)"]
+        EVA --> AS["ArraySubscript: 下标→$v0, 减低下界, 乘元素大小, addu $t0"]
+        EVA --> FLD["Field: 加字段偏移到 $t0"]
+        EVA --> FS["FieldSubscript: 加字段偏移 + 数组下标计算"]
+    end
 ```
-二元运算:
-  编译右操作数 → $v0 → push $v0 到栈
-  编译左操作数 → $v0
-  pop 到 $t0 → 执行运算: $v0 = $v0 op $t0
 
 结果约定: 表达式结果始终在 $v0 中
-
-变量访问 (含选择器):
-  简单变量 → emit_load (直接 lw/lb)
-  有下标/字段 → emit_var_address → $t0 → lw/lb $v0, 0($t0)
-    ArraySubscript: 计算下标 exp → $v0, 减低下界, 乘元素大小, addu $t0
-    Field: 加字段偏移到 $t0
-    FieldSubscript: 加字段偏移 + 数组下标计算
-```
 
 ### 6.6 语句编译对照表
 
@@ -251,67 +254,43 @@ procedure 栈帧:
 
 ### 6.7 过程调用完整序列
 
-```
-调用者:
-  参数逆序压栈 (addiu + sw)
-  jal proc_name
+```mermaid
+sequenceDiagram
+    participant Caller as 调用者
+    participant Callee as 被调用者
 
-被调用者:
-  addiu $sp, $sp, -8        # $fp + $ra 空间
-  sw $fp, 0($sp)            # 保存旧 $fp
-  sw $ra, 4($sp)            # 保存 $ra
-  move $fp, $sp             # 设置新帧指针
-  addiu $sp, $sp, -N        # 分配局部变量
-  ...执行过程体...
-  addiu $sp, $sp, N         # 释放局部变量
-  lw $fp, 0($sp)            # 恢复旧 $fp
-  lw $ra, 4($sp)            # 恢复 $ra
-  addiu $sp, $sp, 8         # 释放 $fp + $ra
-  jr $ra                    # 返回
-
-调用者:
-  addiu $sp, $sp, 4×N       # 弹出参数
+    Caller->>Caller: 参数逆序压栈 (addiu + sw)
+    Caller->>Callee: jal proc_name
+    Callee->>Callee: addiu $sp, $sp, -8
+    Callee->>Callee: sw $fp, 0($sp)
+    Callee->>Callee: sw $ra, 4($sp)
+    Callee->>Callee: move $fp, $sp
+    Callee->>Callee: addiu $sp, $sp, -N (分配局部变量)
+    Note over Callee: ...执行过程体...
+    Callee->>Callee: addiu $sp, $sp, N (释放局部变量)
+    Callee->>Callee: lw $fp, 0($sp)
+    Callee->>Callee: lw $ra, 4($sp)
+    Callee->>Callee: addiu $sp, $sp, 8
+    Callee->>Caller: jr $ra (返回)
+    Caller->>Caller: addiu $sp, $sp, 4×N (弹出参数)
 ```
 
 ## 7. 数据流总览 (以 factorial 为例)
 
-```
-输入: "program factorial var integer result; ... begin ... end."
-  │
-  ▼
-词法分析:
-  program → TK::Program
-  factorial → Ident
-  var → TK::Var
-  integer → TK::Integer
-  ...
-  │
-  ▼ 输出 token.md
-语法分析 (AST):
-  Program { name: factorial
-    decl: DeclarePart { vars: [result, n], procs: [fact] }
-    body: StmList [Assign, Call, Write] }
-  │
-  ▼ 输出 tree.md
-语义分析:
-  ✓ 符号表: result(global), n(global), fact(proc, param=m), m(local), temp(local)
-  ✓ 类型检查通过
-  │
-  ▼ 输出 table.md
-代码生成 (.asm):
-  .data
-  var_result: .word 0
-  var_n: .word 0
-  .text
-  main:
-    ...
-    jal proc_fact
-    ...
-  proc_fact:
-    addiu $sp, $sp, -8
-    sw $fp, 0($sp)
-    sw $ra, 4($sp)
-    ...
+```mermaid
+flowchart TD
+    INPUT['''输入: "program factorial var integer result; ..."''']
+    INPUT --> LEX["词法分析"]
+    LEX --> LEX_OUT["program→TK::Program<br/>factorial→Ident<br/>var→TK::Var<br/>integer→TK::Integer<br/>..."]
+    LEX --> TOKEN_MD["→ token.md"]
+    LEX_OUT --> PARSE["语法分析 (AST)"]
+    PARSE --> AST_OUT["Program { name: factorial<br/>  decl: DeclarePart { vars: [result, n], procs: [fact] }<br/>  body: StmList [Assign, Call, Write] }"]
+    PARSE --> TREE_MD["→ tree.md"]
+    AST_OUT --> SEM["语义分析"]
+    SEM --> SEM_OUT["✓ 符号表: result(global), n(global), fact(proc, param=m), m(local), temp(local)<br/>✓ 类型检查通过"]
+    SEM --> TABLE_MD["→ table.md"]
+    SEM_OUT --> CG["代码生成 (.asm)"]
+    CG --> ASM_OUT[".data / var_result: .word 0 / var_n: .word 0<br/>.text / main: ... jal proc_fact ...<br/>proc_fact: addiu $sp, $sp, -8 ..."]
 ```
 
 ## 8. 关键设计决策

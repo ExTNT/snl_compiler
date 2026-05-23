@@ -41,20 +41,20 @@
 
 DFA 使用 **最长匹配策略**，通过回溯实现单字符前瞻。核心状态：
 
-```
-Start ──字母──→ InIdent ──非字母数字──→ Done (backtrack=true)
-  │                │
-  ├──数字──→ InNumber ──非数字──→ Done (backtrack=true)
-  │
-  ├──  :  ──→ InAssign ── = ──→ Done (Assign, backtrack=false)
-  │                          └── 非= ──→ Done (backtrack=true)
-  ├──  .  ──→ InRange  ── . ──→ Done (Range, backtrack=false)
-  │                    └── 非. ──→ Done (Dot, backtrack=true)
-  ├──  {  ──→ InComment ── } ──→ Start (注释结束)
-  │
-  ├──  '  ──→ InChar ──(字符)──→ InCharEnd ── ' ──→ Done (CharConst)
-  │
-  └── 单字符运算符 ──→ Done (即刻完成, backtrack=false)
+```mermaid
+flowchart LR
+    S((Start))
+    S -- "字母" --> InIdent[InIdent] -- "非字母数字" --> D1[Done<br/>backtrack=true]
+    S -- "数字" --> InNumber[InNumber] -- "非数字" --> D2[Done<br/>backtrack=true]
+    S -- ":" --> InAssign[InAssign]
+    InAssign -- "=" --> D3[Done<br/>Assign, backtrack=false]
+    InAssign -- "非=" --> D4[Done<br/>backtrack=true]
+    S -- "." --> InRange[InRange]
+    InRange -- "." --> D5[Done<br/>Range, backtrack=false]
+    InRange -- "非." --> D6[Done<br/>Dot, backtrack=true]
+    S -- "{" --> InComment[InComment] -- "}" --> S
+    S -- "'" --> InChar[InChar] -- "字符" --> InCharEnd[InCharEnd] -- "'" --> D7[Done<br/>CharConst]
+    S -- "单字符运算符" --> D8[Done<br/>backtrack=false]
 ```
 
 **关键实现 —— `backtrack` 标志：**
@@ -178,17 +178,13 @@ pub fn lookup_keyword(ident: &str) -> TokenKind {
 
 运算符优先级不是通过查表实现，而是通过**函数调用层次**编码：
 
-```
-parse_rel_exp()     处理 < 和 =  (最外层，最低优先级)
-    │
-    ▼
-parse_exp()         处理 + 和 -
-    │
-    ▼
-parse_term()        处理 * 和 /
-    │
-    ▼
-parse_factor()      处理常量、变量、括号表达式 (最内层，最高优先级)
+```mermaid
+flowchart TD
+    PRE["<b>parse_rel_exp()</b><br/>处理 &lt; 和 =<br/>(最外层，最低优先级)"]
+    EXP["<b>parse_exp()</b><br/>处理 + 和 -"]
+    TERM["<b>parse_term()</b><br/>处理 * 和 /"]
+    FAC["<b>parse_factor()</b><br/>处理常量、变量、括号表达式<br/>(最内层，最高优先级)"]
+    PRE --> EXP --> TERM --> FAC
 ```
 
 **关键代码 —— 左递归消除模式：**
@@ -421,19 +417,20 @@ pub enum TypeInfo {
 
 **第一遍：符号表构建 (`collect_declarations`)**
 
-```
-Program
-  ├── 插入程序名 (ProcId, level=0)
-  ├── collect_type_decs   →  每个 "type T = X" 插入 TypeId
-  ├── collect_var_decs    →  每个 "var T x" 插入 VarId (携带 TypeInfo)
-  └── collect_proc_decs   →  递归:
-       插入 ProcId (含 ParamInfo 列表)
-       ├── enter_scope()
-       ├── 参数插入为 VarId
-       ├── 递归处理子声明
-       ├── check_program_body(proc.body)  ← 第二遍在此触发
-       ├── snapshot_scope()               ← 保存作用域快照
-       └── exit_scope()
+```mermaid
+flowchart TD
+    PROG["Program"]
+    PROG --> INS["插入程序名 (ProcId, level=0)"]
+    PROG --> CTD["collect_type_decs → 每个 type 插入 TypeId"]
+    PROG --> CVD["collect_var_decs → 每个 var 插入 VarId (携带 TypeInfo)"]
+    PROG --> CPD["collect_proc_decs → 递归"]
+    CPD --> CPI["插入 ProcId (含 ParamInfo 列表)"]
+    CPI --> ES["enter_scope()"]
+    ES --> PARAM["参数插入为 VarId"]
+    PARAM --> RECURSE["递归处理子声明"]
+    RECURSE --> CPB["check_program_body(proc.body)<br/>← 第二遍在此触发"]
+    CPB --> SS["snapshot_scope()<br/>← 保存作用域快照"]
+    SS --> EXIT["exit_scope()"]
 ```
 
 **第二遍：语句检查 (`check_program_body`)**
@@ -716,22 +713,27 @@ fn emit_var_address(va: &VarAccess, ctx: &mut MipsContext) -> CodegenType {
 
 **walk_selectors 逐选择器处理：**
 
-```
-ArraySubscript(exp):
-  1. push $t0              (保存基地址 — compile_exp 会破坏 $t0)
-  2. compile_exp(exp)      (下标 → $v0)
-  3. addiu $v0, $v0, -lo  (减去低下界, 如 a[5..10]: 下标5 → 偏移0)
-  4. sll $v0, $v0, 2      (仅 int: 乘4; char 不位移)
-  5. pop $t0               (恢复基地址)
-  6. addu $t0, $t0, $v0    (基地址 + 偏移)
-
-Field(name):
-  1. field_offsets() 查表得到 (field_offset, field_type)
-  2. addiu $t0, $t0, field_offset
-
-FieldSubscript(name, exp):
-  1. addiu $t0, $t0, field_offset    (跳到数组字段)
-  2. push $t0 + compile_exp(exp) + 减下界 + 乘元素大小 + pop $t0 + addu
+```mermaid
+flowchart TD
+    subgraph AS["ArraySubscript(exp)"]
+        AS1["1. push $t0 (保存基地址)"]
+        AS2["2. compile_exp(exp) → $v0"]
+        AS3["3. addiu $v0, $v0, -lo (减低下界)"]
+        AS4["4. sll $v0, $v0, 2 (仅 int; char 不位移)"]
+        AS5["5. pop $t0 (恢复基地址)"]
+        AS6["6. addu $t0, $t0, $v0"]
+        AS1 --> AS2 --> AS3 --> AS4 --> AS5 --> AS6
+    end
+    subgraph FLD["Field(name)"]
+        FLD1["1. field_offsets() 查表 → (offset, type)"]
+        FLD2["2. addiu $t0, $t0, field_offset"]
+        FLD1 --> FLD2
+    end
+    subgraph FS["FieldSubscript(name, exp)"]
+        FS1["1. addiu $t0, $t0, field_offset"]
+        FS2["2. push $t0 + compile_exp(exp) + 减下界 + 乘元素大小 + pop $t0 + addu"]
+        FS1 --> FS2
+    end
 ```
 
 **关键：`$t0` 冲突处理。** `compile_exp` 的 Binary 分支在弹栈时使用 `$t0` 作为临时寄存器，因此 `walk_selectors` 在调用 `compile_exp` 前必须保存 `$t0`：
@@ -876,29 +878,27 @@ Stm::While { cond, body, .. } => {
 
 ### 4.9 过程调用完整序列
 
-```
-调用者:
-  # 参数逆序压栈
-  compile_exp(argN); addiu $sp, $sp, -4; sw $v0, 0($sp);
-  ...
-  compile_exp(arg1); addiu $sp, $sp, -4; sw $v0, 0($sp);
-  jal proc_X
+```mermaid
+sequenceDiagram
+    participant Caller as 调用者
+    participant Callee as 被调用者 (proc_X)
 
-被调用者 (proc_X):
-  addiu $sp, $sp, -8         # $fp + $ra 空间
-  sw $fp, 0($sp)             # 保存旧帧指针
-  sw $ra, 4($sp)             # 保存返回地址
-  move $fp, $sp               # 设置新帧
-  addiu $sp, $sp, -N          # 分配局部变量
-  ... 过程体 ...
-  addiu $sp, $sp, N           # 释放局部变量
-  lw $fp, 0($sp)              # 恢复旧帧指针
-  lw $ra, 4($sp)              # 恢复返回地址
-  addiu $sp, $sp, 8
-  jr $ra                      # 返回
-
-调用者:
-  addiu $sp, $sp, 4×N         # 弹出参数
+    Caller->>Caller: compile_exp(argN); addiu $sp, $sp, -4; sw $v0, 0($sp)
+    Caller->>Caller: ...
+    Caller->>Caller: compile_exp(arg1); addiu $sp, $sp, -4; sw $v0, 0($sp)
+    Caller->>Callee: jal proc_X
+    Callee->>Callee: addiu $sp, $sp, -8
+    Callee->>Callee: sw $fp, 0($sp)
+    Callee->>Callee: sw $ra, 4($sp)
+    Callee->>Callee: move $fp, $sp
+    Callee->>Callee: addiu $sp, $sp, -N (分配局部变量)
+    Note over Callee: ... 过程体 ...
+    Callee->>Callee: addiu $sp, $sp, N (释放局部变量)
+    Callee->>Callee: lw $fp, 0($sp)
+    Callee->>Callee: lw $ra, 4($sp)
+    Callee->>Callee: addiu $sp, $sp, 8
+    Callee->>Caller: jr $ra (返回)
+    Caller->>Caller: addiu $sp, $sp, 4×N (弹出参数)
 ```
 
 ### 4.10 数据段对齐
