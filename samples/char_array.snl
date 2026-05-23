@@ -1,0 +1,15 @@
+program chararr
+    var array[0..4] of char s;
+        integer i;
+begin
+    s[0] := 'H';
+    s[1] := 'e';
+    s[2] := 'l';
+    s[3] := 'l';
+    s[4] := 'o';
+    i := 0;
+    while i < 5 do
+        write(s[i]);
+        i := i + 1
+    endwh
+end.

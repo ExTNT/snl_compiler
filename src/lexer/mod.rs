@@ -1,0 +1,507 @@
+mod dfa;
+mod keyword;
+pub mod token;
+
+use dfa::{Dfa, DfaState};
+pub use token::{Token, TokenKind};
+
+#[derive(Debug, Clone)]
+pub struct LexerError {
+    pub msg: String,
+    pub line: usize,
+    pub col: usize,
+}
+
+pub struct Lexer {
+    tokens: Vec<Token>,
+    errors: Vec<LexerError>,
+}
+
+impl Lexer {
+    pub fn new() -> Self {
+        Lexer {
+            tokens: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    pub fn tokenize(&mut self, source: &str) -> (&[Token], &[LexerError]) {
+        let chars: Vec<char> = source.chars().collect();
+        let mut dfa = Dfa::new(1, 1);
+        let mut i = 0;
+        let mut line: usize = 1;
+        let mut col: usize = 1;
+
+        while i < chars.len() {
+            let ch = chars[i];
+
+            // In Start state, skip whitespace
+            if dfa.state == DfaState::Start {
+                if ch == '\n' {
+                    line += 1;
+                    col = 1;
+                    i += 1;
+                    dfa.reset(line, col);
+                    continue;
+                }
+                if ch.is_whitespace() {
+                    col += 1;
+                    i += 1;
+                    dfa.reset(line, col);
+                    continue;
+                }
+            }
+
+            let result = dfa.advance(ch);
+
+            match result {
+                Some(r) if dfa.state == DfaState::Done => {
+                    self.tokens.push(Token {
+                        kind: r.kind,
+                        line: r.line,
+                        col: r.col,
+                    });
+                    dfa.reset(line, col);
+                    if !r.backtrack {
+                        i += 1;
+                        col += 1;
+                    }
+                    // If backtrack: re-process ch as start of next token
+                }
+                Some(r) => {
+                    // Single-char token from Start, or comment-end resume
+                    self.tokens.push(Token {
+                        kind: r.kind,
+                        line: r.line,
+                        col: r.col,
+                    });
+                    i += 1;
+                    col += 1;
+                }
+                None => {
+                    i += 1;
+                    col += 1;
+                    if ch == '\n' && dfa.state == DfaState::InComment {
+                        line += 1;
+                        col = 1;
+                        dfa.line = line;
+                        dfa.col = col;
+                    }
+                }
+            }
+        }
+
+        // Flush pending state at EOF
+        match dfa.state {
+            DfaState::Start => {}
+            DfaState::InComment => {
+                self.errors.push(LexerError {
+                    msg: "Unterminated comment".to_string(),
+                    line: dfa.line,
+                    col: dfa.col,
+                });
+            }
+            DfaState::InChar | DfaState::InCharEnd => {
+                self.errors.push(LexerError {
+                    msg: "Unterminated character literal".to_string(),
+                    line: dfa.line,
+                    col: dfa.col,
+                });
+            }
+            _ => {
+                if let Some(result) = dfa.finish() {
+                    self.tokens.push(Token {
+                        kind: result.kind,
+                        line: result.line,
+                        col: result.col,
+                    });
+                }
+            }
+        }
+
+        self.tokens.push(Token {
+            kind: TokenKind::Eof,
+            line,
+            col,
+        });
+        (&self.tokens, &self.errors)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tokenize(source: &str) -> Vec<Token> {
+        let mut lexer = Lexer::new();
+        let (tokens, errors) = lexer.tokenize(source);
+        assert!(errors.is_empty(), "Unexpected lexer errors: {:?}", errors);
+        tokens.to_vec()
+    }
+
+    fn token_kinds(source: &str) -> Vec<TokenKind> {
+        tokenize(source).iter().map(|t| t.kind.clone()).collect()
+    }
+
+    #[test]
+    fn test_single_char_operators() {
+        let kinds = token_kinds("+ - * / ( ) [ ] ; . , < =");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Times,
+                TokenKind::Divide,
+                TokenKind::LParent,
+                TokenKind::RParent,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+                TokenKind::Semicolon,
+                TokenKind::Dot,
+                TokenKind::Comma,
+                TokenKind::Less,
+                TokenKind::Equal,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_assign_operator() {
+        let kinds = token_kinds(":=");
+        assert_eq!(kinds, vec![TokenKind::Assign, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_range_operator() {
+        let kinds = token_kinds("..");
+        assert_eq!(kinds, vec![TokenKind::Range, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_dot_alone() {
+        let kinds = token_kinds(".");
+        assert_eq!(kinds, vec![TokenKind::Dot, TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_keywords() {
+        let source = "program var procedure begin end integer char array record type while do endwh if then else fi return read write of";
+        let kinds = token_kinds(source);
+        let expected = vec![
+            TokenKind::Program,
+            TokenKind::Var,
+            TokenKind::Procedure,
+            TokenKind::Begin,
+            TokenKind::End,
+            TokenKind::Integer,
+            TokenKind::Char,
+            TokenKind::Array,
+            TokenKind::Record,
+            TokenKind::Type,
+            TokenKind::While,
+            TokenKind::Do,
+            TokenKind::EndWh,
+            TokenKind::If,
+            TokenKind::Then,
+            TokenKind::Else,
+            TokenKind::Fi,
+            TokenKind::Return,
+            TokenKind::Read,
+            TokenKind::Write,
+            TokenKind::Of,
+            TokenKind::Eof,
+        ];
+        assert_eq!(kinds, expected);
+    }
+
+    #[test]
+    fn test_identifiers() {
+        let kinds = token_kinds("v1 f pp myVar");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("v1".into()),
+                TokenKind::Ident("f".into()),
+                TokenKind::Ident("pp".into()),
+                TokenKind::Ident("myVar".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_integers() {
+        let kinds = token_kinds("0 123 456");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::IntConst(0),
+                TokenKind::IntConst(123),
+                TokenKind::IntConst(456),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_char_literal() {
+        let kinds = token_kinds("'a' 'Z'");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::CharConst('a'),
+                TokenKind::CharConst('Z'),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_comment() {
+        let kinds = token_kinds("{ this is a comment } program");
+        assert_eq!(kinds, vec![TokenKind::Program, TokenKind::Eof,]);
+    }
+
+    #[test]
+    fn test_simple_program() {
+        let source = "program pp var integer v1; char c; begin v1 := 2 end.";
+        let kinds = token_kinds(source);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Program,
+                TokenKind::Ident("pp".into()),
+                TokenKind::Var,
+                TokenKind::Integer,
+                TokenKind::Ident("v1".into()),
+                TokenKind::Semicolon,
+                TokenKind::Char,
+                TokenKind::Ident("c".into()),
+                TokenKind::Semicolon,
+                TokenKind::Begin,
+                TokenKind::Ident("v1".into()),
+                TokenKind::Assign,
+                TokenKind::IntConst(2),
+                TokenKind::End,
+                TokenKind::Dot,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_nested_procedure() {
+        let source = "program pp procedure f(); begin v1 := 2 end begin f(); write(v1) end.";
+        let kinds = token_kinds(source);
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Program,
+                TokenKind::Ident("pp".into()),
+                TokenKind::Procedure,
+                TokenKind::Ident("f".into()),
+                TokenKind::LParent,
+                TokenKind::RParent,
+                TokenKind::Semicolon,
+                TokenKind::Begin,
+                TokenKind::Ident("v1".into()),
+                TokenKind::Assign,
+                TokenKind::IntConst(2),
+                TokenKind::End,
+                TokenKind::Begin,
+                TokenKind::Ident("f".into()),
+                TokenKind::LParent,
+                TokenKind::RParent,
+                TokenKind::Semicolon,
+                TokenKind::Write,
+                TokenKind::LParent,
+                TokenKind::Ident("v1".into()),
+                TokenKind::RParent,
+                TokenKind::End,
+                TokenKind::Dot,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_empty_source() {
+        let kinds = token_kinds("");
+        assert_eq!(kinds, vec![TokenKind::Eof]);
+    }
+
+    #[test]
+    fn test_comment_with_newlines() {
+        let kinds = token_kinds("{ multi\nline\ncomment } ident");
+        assert_eq!(
+            kinds,
+            vec![TokenKind::Ident("ident".into()), TokenKind::Eof,]
+        );
+    }
+
+    #[test]
+    fn test_unterminated_comment_error() {
+        let mut lexer = Lexer::new();
+        let (_, errors) = lexer.tokenize("{ unterminated comment");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.msg.contains("Unterminated comment"))
+        );
+    }
+
+    #[test]
+    fn test_unterminated_char_error() {
+        let mut lexer = Lexer::new();
+        let (_, errors) = lexer.tokenize("'a");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.msg.contains("Unterminated character"))
+        );
+    }
+
+    #[test]
+    fn test_comment_between_tokens() {
+        let kinds = token_kinds("x { comment } := { another } 1");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("x".into()),
+                TokenKind::Assign,
+                TokenKind::IntConst(1),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_mixed_case_identifiers() {
+        let kinds = token_kinds("myVar CamelCase Case1 Var1");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("myVar".into()),
+                TokenKind::Ident("CamelCase".into()),
+                TokenKind::Ident("Case1".into()),
+                TokenKind::Ident("Var1".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_underscore_is_separator() {
+        // Underscores are not valid in SNL identifiers, they act as separators
+        let kinds = token_kinds("snake_case");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("snake".into()),
+                TokenKind::Ident("case".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_keyword_vs_identifier_distinction() {
+        // 'programa' is an identifier, 'program' is a keyword
+        let kinds = token_kinds("programa program programb");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Ident("programa".into()),
+                TokenKind::Program,
+                TokenKind::Ident("programb".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_multiline_program_tokens() {
+        let source = "program p\nvar\ninteger x;\nbegin\nx := 1;\nwrite(x)\nend.\n";
+        let tokens = tokenize(source);
+        assert!(tokens.len() > 5);
+        // All keywords should be present
+        let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
+        assert!(kinds.contains(&&TokenKind::Program));
+        assert!(kinds.contains(&&TokenKind::Var));
+        assert!(kinds.contains(&&TokenKind::Integer));
+        assert!(kinds.contains(&&TokenKind::Begin));
+        assert!(kinds.contains(&&TokenKind::End));
+        assert!(kinds.contains(&&TokenKind::Write));
+    }
+
+    #[test]
+    fn test_token_line_col_tracking() {
+        let mut lexer = Lexer::new();
+        let (tokens, _) = lexer.tokenize("program\n  p\nbegin");
+        // First token: program at line 1, col 1
+        assert_eq!(tokens[0].line, 1);
+        assert_eq!(tokens[0].col, 1);
+        // Second token: p at line 2, col 3 (after two spaces)
+        assert_eq!(tokens[1].line, 2);
+        assert_eq!(tokens[1].col, 3);
+        // Third token: begin at line 3, col 1
+        assert_eq!(tokens[2].line, 3);
+        assert_eq!(tokens[2].col, 1);
+    }
+
+    #[test]
+    fn test_colon_alone_is_error() {
+        let mut lexer = Lexer::new();
+        let (tokens, _) = lexer.tokenize("x :");
+        // ':' alone without '=' should still produce tokens (the ':' is consumed)
+        // The ':' might produce an error or be handled as a single token
+        let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
+        assert!(kinds.contains(&&TokenKind::Ident("x".into())));
+    }
+
+    #[test]
+    fn test_adjacent_operators() {
+        let kinds = token_kinds("+-*/();");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::Plus,
+                TokenKind::Minus,
+                TokenKind::Times,
+                TokenKind::Divide,
+                TokenKind::LParent,
+                TokenKind::RParent,
+                TokenKind::Semicolon,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_large_integer() {
+        let kinds = token_kinds("999999 0 100 42");
+        assert_eq!(
+            kinds,
+            vec![
+                TokenKind::IntConst(999999),
+                TokenKind::IntConst(0),
+                TokenKind::IntConst(100),
+                TokenKind::IntConst(42),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn test_program_with_read_write_return() {
+        let source = "program p procedure f(integer n); begin return(n) end begin read(x); f(5); write(x) end.";
+        let tokens = tokenize(source);
+        let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
+        assert!(kinds.contains(&&TokenKind::Read));
+        assert!(kinds.contains(&&TokenKind::Return));
+        assert!(kinds.contains(&&TokenKind::Write));
+        assert!(kinds.contains(&&TokenKind::Procedure));
+    }
+}

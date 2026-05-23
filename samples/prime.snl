@@ -1,0 +1,20 @@
+program prime
+    var integer n; integer d; integer primeFlag; integer remainder;
+begin
+    n := 17;
+    d := 2;
+    primeFlag := 1;
+    while d < n do
+        remainder := n;
+        while d < remainder do
+            remainder := remainder - d
+        endwh;
+        if remainder < d then
+            d := d + 1
+        else
+            primeFlag := 0;
+            d := n
+        fi
+    endwh;
+    write(primeFlag)
+end.

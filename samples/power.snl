@@ -1,0 +1,13 @@
+program power
+    var integer base; integer exp; integer result; integer i;
+begin
+    base := 2;
+    exp := 8;
+    result := 1;
+    i := 0;
+    while i < exp do
+        result := result * base;
+        i := i + 1
+    endwh;
+    write(result)
+end.

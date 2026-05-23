@@ -1,0 +1,9 @@
+program chartest
+    var char c;
+        char d;
+begin
+    c := 'A';
+    d := 'B';
+    write(c);
+    write(d)
+end.

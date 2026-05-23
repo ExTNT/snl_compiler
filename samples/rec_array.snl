@@ -1,0 +1,15 @@
+program recarr
+    var record array[0..4] of integer data; integer count; end r;
+        integer i;
+begin
+    r.count := 5;
+    i := 0;
+    while i < r.count do
+        r.data[i] := i * 10;
+        i := i + 1
+    endwh;
+    write(r.data[0]);
+    write(r.data[2]);
+    write(r.data[4]);
+    write(r.count)
+end.

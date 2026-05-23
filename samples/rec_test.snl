@@ -1,0 +1,8 @@
+program rectest
+    var record integer id; char tag; end r;
+begin
+    r.id := 100;
+    r.tag := 'X';
+    write(r.id);
+    write(r.tag)
+end.

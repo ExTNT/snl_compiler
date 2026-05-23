@@ -1,0 +1,19 @@
+program gcd
+    var integer a; integer b; integer done;
+begin
+    a := 48;
+    b := 18;
+    done := 0;
+    while done < 1 do
+        if a < b then
+            b := b - a
+        else
+            if b < a then
+                a := a - b
+            else
+                done := 1
+            fi
+        fi
+    endwh;
+    write(a)
+end.

@@ -1,0 +1,15 @@
+program control
+    var integer n;
+begin
+    n := 10;
+    if n < 20
+    then
+        n := n + 1
+    else
+        n := n - 1
+    fi;
+    while 1
+    do
+        write(n)
+    endwh
+end.

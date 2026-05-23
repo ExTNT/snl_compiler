@@ -1,0 +1,13 @@
+program intarr
+    var array[1..5] of integer a;
+        integer i;
+begin
+    i := 1;
+    while i < 6 do
+        a[i] := i * 2;
+        i := i + 1
+    endwh;
+    write(a[1]);
+    write(a[3]);
+    write(a[5])
+end.

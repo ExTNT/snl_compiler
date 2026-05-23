@@ -1,0 +1,9 @@
+program arithmetic
+    var integer x;
+        integer y;
+begin
+    x := 10;
+    y := x + 5;
+    write(x);
+    write(y)
+end.

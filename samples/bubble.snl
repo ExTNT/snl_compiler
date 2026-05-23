@@ -1,0 +1,27 @@
+program bubble
+    var array[0..4] of integer a;
+        integer n; integer i; integer j; integer temp;
+begin
+    a[0] := 64; a[1] := 34; a[2] := 25; a[3] := 12; a[4] := 22;
+    n := 5;
+    i := 0;
+    while i < n do
+        j := 0;
+        while j < (n - 1) do
+            if a[j + 1] < a[j] then
+                temp := a[j];
+                a[j] := a[j + 1];
+                a[j + 1] := temp
+            else
+                temp := 0
+            fi;
+            j := j + 1
+        endwh;
+        i := i + 1
+    endwh;
+    i := 0;
+    while i < n do
+        write(a[i]);
+        i := i + 1
+    endwh
+end.
