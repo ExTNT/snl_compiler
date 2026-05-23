@@ -279,7 +279,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    INPUT['''输入: "Program factorial var integer result; ..."''']
+    INPUT['''输入："Program factorial var integer result; ..."''']
     INPUT --> LEX["词法分析"]
     LEX --> LEX_OUT["program→TK::Program<br/>factorial→Ident<br/>var→TK::Var<br/>integer→TK::Integer<br/>..."]
     LEX --> TOKEN_MD["→ token.md"]
