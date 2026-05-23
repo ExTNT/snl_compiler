@@ -878,27 +878,29 @@ Stm::While { cond, body, .. } => {
 
 ### 4.9 过程调用完整序列
 
-```mermaid
-sequenceDiagram
-    participant Caller as 调用者
-    participant Callee as 被调用者 (proc_X)
+```
+调用者:
+  # 参数逆序压栈
+  compile_exp(argN); addiu $sp, $sp, -4; sw $v0, 0($sp);
+  ...
+  compile_exp(arg1); addiu $sp, $sp, -4; sw $v0, 0($sp);
+  jal proc_X
 
-    Caller->>Caller: compile_exp(argN); addiu $sp, $sp, -4; sw $v0, 0($sp)
-    Caller->>Caller: ...
-    Caller->>Caller: compile_exp(arg1); addiu $sp, $sp, -4; sw $v0, 0($sp)
-    Caller->>Callee: jal proc_X
-    Callee->>Callee: addiu $sp, $sp, -8
-    Callee->>Callee: sw $fp, 0($sp)
-    Callee->>Callee: sw $ra, 4($sp)
-    Callee->>Callee: move $fp, $sp
-    Callee->>Callee: addiu $sp, $sp, -N (分配局部变量)
-    Note over Callee: ... 过程体 ...
-    Callee->>Callee: addiu $sp, $sp, N (释放局部变量)
-    Callee->>Callee: lw $fp, 0($sp)
-    Callee->>Callee: lw $ra, 4($sp)
-    Callee->>Callee: addiu $sp, $sp, 8
-    Callee->>Caller: jr $ra (返回)
-    Caller->>Caller: addiu $sp, $sp, 4×N (弹出参数)
+被调用者 (proc_X):
+  addiu $sp, $sp, -8         # $fp + $ra 空间
+  sw $fp, 0($sp)             # 保存旧帧指针
+  sw $ra, 4($sp)             # 保存返回地址
+  move $fp, $sp               # 设置新帧
+  addiu $sp, $sp, -N          # 分配局部变量
+  ... 过程体 ...
+  addiu $sp, $sp, N           # 释放局部变量
+  lw $fp, 0($sp)              # 恢复旧帧指针
+  lw $ra, 4($sp)              # 恢复返回地址
+  addiu $sp, $sp, 8
+  jr $ra                      # 返回
+
+调用者:
+  addiu $sp, $sp, 4×N         # 弹出参数
 ```
 
 ### 4.10 数据段对齐
