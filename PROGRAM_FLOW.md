@@ -277,20 +277,43 @@ sequenceDiagram
 
 ## 7. 数据流总览 (以 factorial 为例)
 
-```mermaid
-flowchart TD
-    INPUT['''输入："Program factorial var integer result; ..."''']
-    INPUT --> LEX["词法分析"]
-    LEX --> LEX_OUT["program→TK::Program<br/>factorial→Ident<br/>var→TK::Var<br/>integer→TK::Integer<br/>..."]
-    LEX --> TOKEN_MD["→ token.md"]
-    LEX_OUT --> PARSE["语法分析 (AST)"]
-    PARSE --> AST_OUT["Program { name: factorial<br/>  decl: DeclarePart { vars: [result, n], procs: [fact] }<br/>  body: StmList [Assign, Call, Write] }"]
-    PARSE --> TREE_MD["→ tree.md"]
-    AST_OUT --> SEM["语义分析"]
-    SEM --> SEM_OUT["✓ 符号表: result(global), n(global), fact(proc, param=m), m(local), temp(local)<br/>✓ 类型检查通过"]
-    SEM --> TABLE_MD["→ table.md"]
-    SEM_OUT --> CG["代码生成 (.asm)"]
-    CG --> ASM_OUT[".data / var_result: .word 0 / var_n: .word 0<br/>.text / main: ... jal proc_fact ...<br/>proc_fact: addiu $sp, $sp, -8 ..."]
+```
+输入: "program factorial var integer result; ... begin ... end."
+  │
+  ▼
+词法分析:
+  program → TK::Program
+  factorial → Ident
+  var → TK::Var
+  integer → TK::Integer
+  ...
+  │
+  ▼ 输出 token.md
+语法分析 (AST):
+  Program { name: factorial
+    decl: DeclarePart { vars: [result, n], procs: [fact] }
+    body: StmList [Assign, Call, Write] }
+  │
+  ▼ 输出 tree.md
+语义分析:
+  ✓ 符号表: result(global), n(global), fact(proc, param=m), m(local), temp(local)
+  ✓ 类型检查通过
+  │
+  ▼ 输出 table.md
+代码生成 (.asm):
+  .data
+  var_result: .word 0
+  var_n: .word 0
+  .text
+  main:
+    ...
+    jal proc_fact
+    ...
+  proc_fact:
+    addiu $sp, $sp, -8
+    sw $fp, 0($sp)
+    sw $ra, 4($sp)
+    ...
 ```
 
 ## 8. 关键设计决策
