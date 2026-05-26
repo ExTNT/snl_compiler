@@ -1,3 +1,13 @@
+//! 词法分析器（Lexer）。
+//!
+//! 将 SNL 源代码分割为 Token 序列。采用 DFA 驱动的逐字符扫描方式，
+//! 基于最长匹配原则识别 Token。注释（`{ ... }`）在词法阶段被丢弃，
+//! 空白字符用于行号/列号追踪。
+//!
+//! ## 错误处理
+//! 词法错误（如未闭合的注释或字符字面量）记录在 `errors` 列表中，
+//! 不会中断扫描——词法分析器会尝试恢复并继续处理剩余源码。
+
 mod dfa;
 mod keyword;
 pub mod token;
@@ -5,6 +15,9 @@ pub mod token;
 use dfa::{Dfa, DfaState};
 pub use token::{Token, TokenKind};
 
+/// 词法错误。
+///
+/// 记录错误消息及发生位置，不中断扫描流程。
 #[derive(Debug, Clone)]
 pub struct LexerError {
     pub msg: String,
@@ -12,12 +25,16 @@ pub struct LexerError {
     pub col: usize,
 }
 
+/// 词法分析器。
+///
+/// 维护 Token 列表和错误列表，通过 `tokenize()` 一次完成整个源码的扫描。
 pub struct Lexer {
     tokens: Vec<Token>,
     errors: Vec<LexerError>,
 }
 
 impl Lexer {
+    /// 创建新的词法分析器实例。
     pub fn new() -> Self {
         Lexer {
             tokens: Vec::new(),
@@ -25,6 +42,16 @@ impl Lexer {
         }
     }
 
+    /// 对源码字符串进行分词。
+    ///
+    /// 该函数消费 `&mut self`，将结果写入内部列表。
+    /// 返回 Token 和错误的引用切片，避免所有权转移。
+    ///
+    /// # 参数
+    /// - `source`: 待分词的 SNL 源代码
+    ///
+    /// # 返回
+    /// `(&[Token], &[LexerError])` — Token 序列和词法错误的引用
     pub fn tokenize(&mut self, source: &str) -> (&[Token], &[LexerError]) {
         let chars: Vec<char> = source.chars().collect();
         let mut dfa = Dfa::new(1, 1);
@@ -35,7 +62,7 @@ impl Lexer {
         while i < chars.len() {
             let ch = chars[i];
 
-            // In Start state, skip whitespace
+            // 在 Start 状态跳过空白字符和换行符
             if dfa.state == DfaState::Start {
                 if ch == '\n' {
                     line += 1;
@@ -56,6 +83,7 @@ impl Lexer {
 
             match result {
                 Some(r) if dfa.state == DfaState::Done => {
+                    // Token 结束于 Done 状态：push 并 reset
                     self.tokens.push(Token {
                         kind: r.kind,
                         line: r.line,
@@ -66,10 +94,10 @@ impl Lexer {
                         i += 1;
                         col += 1;
                     }
-                    // If backtrack: re-process ch as start of next token
+                    // 若 backtrack=true，当前字符将作为下一个 Token 的起始重新处理
                 }
                 Some(r) => {
-                    // Single-char token from Start, or comment-end resume
+                    // 直接从 Start 产生的单字符 Token 或注释结束后的恢复
                     self.tokens.push(Token {
                         kind: r.kind,
                         line: r.line,
@@ -81,6 +109,7 @@ impl Lexer {
                 None => {
                     i += 1;
                     col += 1;
+                    // 注释内的换行符需要追踪行号但不产出 Token
                     if ch == '\n' && dfa.state == DfaState::InComment {
                         line += 1;
                         col = 1;
@@ -91,7 +120,7 @@ impl Lexer {
             }
         }
 
-        // Flush pending state at EOF
+        // 到达 EOF 时冲刷未完成的状态
         match dfa.state {
             DfaState::Start => {}
             DfaState::InComment => {
@@ -119,6 +148,7 @@ impl Lexer {
             }
         }
 
+        // 追加 Eof 作为结尾标记
         self.tokens.push(Token {
             kind: TokenKind::Eof,
             line,
@@ -394,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_underscore_is_separator() {
-        // Underscores are not valid in SNL identifiers, they act as separators
+        // SNL 标识符不允许下划线，下划线被当作分隔符处理
         let kinds = token_kinds("snake_case");
         assert_eq!(
             kinds,
@@ -408,7 +438,7 @@ mod tests {
 
     #[test]
     fn test_keyword_vs_identifier_distinction() {
-        // 'programa' is an identifier, 'program' is a keyword
+        // 'programa' 是标识符，'program' 是关键字
         let kinds = token_kinds("programa program programb");
         assert_eq!(
             kinds,
@@ -426,7 +456,6 @@ mod tests {
         let source = "program p\nvar\ninteger x;\nbegin\nx := 1;\nwrite(x)\nend.\n";
         let tokens = tokenize(source);
         assert!(tokens.len() > 5);
-        // All keywords should be present
         let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
         assert!(kinds.contains(&&TokenKind::Program));
         assert!(kinds.contains(&&TokenKind::Var));
@@ -440,13 +469,10 @@ mod tests {
     fn test_token_line_col_tracking() {
         let mut lexer = Lexer::new();
         let (tokens, _) = lexer.tokenize("program\n  p\nbegin");
-        // First token: program at line 1, col 1
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[0].col, 1);
-        // Second token: p at line 2, col 3 (after two spaces)
         assert_eq!(tokens[1].line, 2);
         assert_eq!(tokens[1].col, 3);
-        // Third token: begin at line 3, col 1
         assert_eq!(tokens[2].line, 3);
         assert_eq!(tokens[2].col, 1);
     }
@@ -455,8 +481,6 @@ mod tests {
     fn test_colon_alone_is_error() {
         let mut lexer = Lexer::new();
         let (tokens, _) = lexer.tokenize("x :");
-        // ':' alone without '=' should still produce tokens (the ':' is consumed)
-        // The ':' might produce an error or be handled as a single token
         let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
         assert!(kinds.contains(&&TokenKind::Ident("x".into())));
     }

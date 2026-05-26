@@ -1,12 +1,30 @@
+//! 语义分析器。
+//!
+//! 对 AST 执行语义检查，包括：
+//! - 符号表构建（两遍：先收集声明，再检查使用）
+//! - 类型检查（赋值、表达式、过程调用参数）
+//! - 未声明标识符检测
+//! - 标识符种类正确性验证
+//!
+//! ## 分析流程
+//! 1. **第一遍**：遍历声明部分，构建符号表（类型、变量、过程）
+//! 2. **第二遍**：遍历语句和表达式，进行类型检查
+//! 3. 每个作用域结束时记录快照，用于生成符号表文档
+
 use std::collections::HashMap;
 
 use crate::ast::nodes::*;
 use crate::error::{CompileError, SemanticErrCode};
 use crate::semantic::symbol::*;
 
+/// 语义分析器。
+///
+/// 维护符号表和错误列表。分析过程消费 AST 的不可变引用，
+/// 不会修改 AST。
 pub struct SemanticAnalyzer {
     symbols: SymbolTable,
     errors: Vec<CompileError>,
+    /// 各作用域的快照，按退出顺序记录
     scope_snapshots: Vec<(usize, HashMap<String, SymbolEntry>)>,
 }
 
@@ -31,29 +49,33 @@ impl SemanticAnalyzer {
         &self.scope_snapshots
     }
 
+    /// 保存当前最内层作用域的快照（用于生成符号表文档）。
     fn snapshot_scope(&mut self) {
         let level = self.symbols.current_level();
         let scope = self.symbols.scopes().last().unwrap().clone();
         self.scope_snapshots.push((level, scope));
     }
 
-    // ===== Main Entry =====
+    // ===== 主入口 =====
 
+    /// 对程序进行完整的语义分析。
+    ///
+    /// 执行两遍分析：第一遍构建符号表，第二遍检查类型。
     pub fn analyze(&mut self, prog: &Program) {
-        // Pass 1: Build symbol table from declarations
+        // 第一遍：符号表构建
         self.collect_declarations(prog);
 
-        // Pass 2: Check statements
+        // 第二遍：语句检查
         self.check_program_body(&prog.body);
 
-        // Snapshot remaining (global) scope
+        // 记录剩余的全局作用域快照
         self.snapshot_scope();
     }
 
-    // ===== Pass 1: Build Symbol Table =====
+    // ===== 第一遍：构建符号表 =====
 
     fn collect_declarations(&mut self, prog: &Program) {
-        // Global scope: program name
+        // 程序名本身作为过程标识符（入口点）
         let _ = self.symbols.insert(SymbolEntry {
             name: prog.name.clone(),
             kind: IdKind::ProcId,
@@ -127,10 +149,10 @@ impl SemanticAnalyzer {
                     loc: proc.loc,
                 });
 
-                // Enter procedure scope for its local declarations
+                // 进入过程作用域
                 self.symbols.enter_scope();
 
-                // Add parameters to the inner scope
+                // 将形参添加到内部作用域（作为变量）
                 for p in &proc.params {
                     let ti = self.type_desig_to_info(&p.type_name);
                     for name in &p.names {
@@ -156,7 +178,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    // ===== Pass 2: Check Statements =====
+    // ===== 第二遍：语句检查 =====
 
     fn check_program_body(&mut self, body: &StmList) {
         for stm in &body.stmts {
@@ -174,7 +196,7 @@ impl SemanticAnalyzer {
                 loc,
             } => {
                 let cond_ty = self.check_exp(cond);
-                // Error 11: condition must be integer (SNL uses integer as boolean)
+                // SNL 以整数作为布尔值，条件必须为整数类型
                 if !matches!(cond_ty, Some(TypeInfo::Integer)) {
                     self.error(
                         SemanticErrCode::CondNotBool,
@@ -222,8 +244,8 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// 检查赋值语句：LHS 必须为变量，左右两侧类型必须兼容。
     fn check_assign(&mut self, lhs: &VarAccess, rhs: &Exp, loc: Loc) {
-        // Error 7: LHS must be a variable
         let lhs_entry = self.symbols.lookup(&lhs.base);
         match lhs_entry {
             None => {
@@ -247,11 +269,9 @@ impl SemanticAnalyzer {
         }
 
         let rhs_ty = self.check_exp(rhs);
-
-        // Check selectors on LHS
         let lhs_ty = self.check_var_access(lhs);
 
-        // Error 6: type compatibility
+        // LHS 和 RHS 类型不兼容时报告错误
         match (&lhs_ty, &rhs_ty) {
             (Some(l), Some(r)) if !types_compatible(l, r) => {
                 self.error(
@@ -264,8 +284,9 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// 检查过程调用：被调用者必须是过程，实参与形参数量和类型必须匹配。
     fn check_call(&mut self, name: &str, args: &[Exp], loc: Loc) {
-        // Clone needed data to avoid borrow conflicts
+        // 克隆所需数据以避免同时持有不可变借用和可变借用
         let proc_info = self
             .symbols
             .lookup(name)
@@ -323,6 +344,9 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// 检查表达式并推导其类型。
+    ///
+    /// 返回表达式类型供上层使用（类型检查、代码生成）。
     fn check_exp(&mut self, exp: &Exp) -> Option<TypeInfo> {
         match exp {
             Exp::Binary {
@@ -343,7 +367,7 @@ impl SemanticAnalyzer {
                     }
                     _ => {}
                 }
-                // Binary ops produce integer (in SNL, all arithmetic is integer)
+                // SNL 中所有算术运算的结果均为整数类型
                 Some(TypeInfo::Integer)
             }
             Exp::IntConst(_, _) => Some(TypeInfo::Integer),
@@ -352,6 +376,7 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// 检查变量访问并推导类型（含选择器链遍历）。
     fn check_var_access(&mut self, va: &VarAccess) -> Option<TypeInfo> {
         let entry = self.symbols.lookup(&va.base);
         match entry {
@@ -366,12 +391,13 @@ impl SemanticAnalyzer {
         }
     }
 
+    /// 解析选择器，逐层推导类型并检查下标范围。
     fn resolve_selector(&mut self, ty: &TypeInfo, sel: &Selector) -> Option<TypeInfo> {
         match ty {
             TypeInfo::Array(elem_ty, low, high) => {
                 match sel {
                     Selector::ArraySubscript(exp) => {
-                        // Error 4: check subscript range
+                        // 常量下标时检查范围
                         if let Exp::IntConst(n, loc) = exp.as_ref() {
                             if *n < *low || *n > *high {
                                 self.error(
@@ -387,7 +413,6 @@ impl SemanticAnalyzer {
                         Some(*elem_ty.clone())
                     }
                     _ => {
-                        // Error 5: invalid field ref on array
                         self.error(
                             SemanticErrCode::InvalidArrayOrFieldRef,
                             "Expected array subscript, got field access",
@@ -403,7 +428,7 @@ impl SemanticAnalyzer {
                         match fields.iter().find(|f| f.name == *name) {
                             Some(f) => {
                                 if let Selector::FieldSubscript(_, exp) = sel {
-                                    // Field has a subscript — the field type should be Array
+                                    // 字段包含下标——字段类型必须为数组
                                     match &f.typ {
                                         TypeInfo::Array(elem_ty, low, high) => {
                                             if let Exp::IntConst(n, loc) = exp.as_ref() {
@@ -447,7 +472,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    // ===== Type Conversion Helpers =====
+    // ===== 类型转换辅助函数 =====
 
     fn type_body_to_info(&self, body: &TypeBody) -> TypeInfo {
         match body {
@@ -526,6 +551,10 @@ impl SemanticAnalyzer {
     }
 }
 
+/// 比较两种类型是否兼容（结构等价）。
+///
+/// 数组要求元素类型和下界上界都相同，
+/// 记录要求字段数量和每一个字段的名字及类型都相同。
 fn types_compatible(a: &TypeInfo, b: &TypeInfo) -> bool {
     match (a, b) {
         (TypeInfo::Integer, TypeInfo::Integer) => true,
@@ -577,14 +606,12 @@ mod tests {
 
     #[test]
     fn test_duplicate_definition() {
-        // Not checked in the current test setup — duplicate in the same scope would be caught by insert
         analyze_ok("program p var integer x; begin x := 1 end.");
     }
 
     #[test]
     fn test_assign_type_mismatch() {
         let errors = analyze("program p var integer x; char c; begin x := 'a' end.");
-        // x is integer, 'a' is char — type mismatch
         assert!(errors.iter().any(|e| matches!(
             e.kind,
             crate::error::ErrorKind::Semantic(SemanticErrCode::AssignTypeMismatch)
@@ -593,8 +620,6 @@ mod tests {
 
     #[test]
     fn test_wrong_id_kind() {
-        let _errors = analyze("program p var integer x; begin x := 1 end.");
-        // No wrong kind errors expected for this simple program
         analyze_ok("program p var integer x; begin x := 1 end.");
     }
 
@@ -602,7 +627,6 @@ mod tests {
     fn test_procedure_call_errors() {
         let errors =
             analyze("program p procedure q(integer a); begin write(a) end begin q('x') end.");
-        // 'x' is char but param expects integer — type mismatch
         assert!(errors.iter().any(|e| matches!(
             e.kind,
             crate::error::ErrorKind::Semantic(SemanticErrCode::ParamTypeMismatch)
@@ -637,8 +661,6 @@ mod tests {
 
     #[test]
     fn test_duplicate_variable_and_procedure_name() {
-        // Variable and procedure with the same name: should produce an error
-        // (either DuplicateId or WrongIdKind)
         let errors = analyze(
             "program p var integer f; procedure f(integer a); begin write(a) end begin f(1) end.",
         );
@@ -650,7 +672,6 @@ mod tests {
 
     #[test]
     fn test_wrong_id_kind_procedure_as_variable() {
-        // Using a procedure name as a variable
         let errors =
             analyze("program p procedure f(integer a); begin write(a) end begin f := 1 end.");
         assert!(errors.iter().any(|e| matches!(

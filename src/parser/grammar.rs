@@ -1,5 +1,20 @@
+//! SNL 文法编码。
+//!
+//! 将 SNL 语言的 EBNF 文法表示为产生式集合。
+//! 该文法被设计为 LL(1)，可直接用于构建预测分析表。
+//!
+//! ## 设计要点
+//! - 原始文法中的 EBNF 重复结构（`{...}`）已通过引入辅助非终结符
+//!   （如 `TypeDecMore`、`VarDecMore`）展开为右递归
+//! - 原始文法中的可选结构（`[...]`）已通过 ε 产生式处理
+//! - Token 字面量变体使用占位值（`String::new()`、`0`、`'\0'`），
+//!   因为解析表匹配时只关心 Token 种类而不关心具体值
+
 use crate::lexer::token::TokenKind;
 
+/// 非终结符枚举。
+///
+/// 命名与 SNL 标准文法保持一致。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NonTerm {
     NProgram,
@@ -48,27 +63,34 @@ pub enum NonTerm {
     CallStmRest,
 }
 
+/// 文法符号：终结符或非终结符。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum GrammarSymbol {
     T(TokenKind),
     N(NonTerm),
 }
 
+/// 一条产生式：左部 + 右部符号序列。
 pub struct Production {
     pub lhs: NonTerm,
     pub rhs: Vec<GrammarSymbol>,
 }
 
+/// 上下文无关文法：产生式集合 + 起始符号。
 pub struct Grammar {
     pub productions: Vec<Production>,
     pub start: NonTerm,
 }
 
+/// 构建 SNL 编码文法。
+///
+/// 返回的 `Grammar` 可用于 FIRST/FOLLOW 计算和 LL(1) 表构建。
 pub fn encode_grammar() -> Grammar {
     use GrammarSymbol::*;
     use NonTerm::*;
     use TokenKind as TK;
 
+    // 生成占位 Token（具体值在 LL(1) 解析时通过 normalize 忽略）
     let ident = TK::Ident(String::new());
     let intc = TK::IntConst(0);
     let charc = TK::CharConst('\0');
@@ -260,6 +282,7 @@ pub fn encode_grammar() -> Grammar {
     }
 }
 
+/// 辅助函数：构造一条产生式。
 fn prod(lhs: NonTerm, rhs: Vec<GrammarSymbol>) -> Production {
     Production { lhs, rhs }
 }

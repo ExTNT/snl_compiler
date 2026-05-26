@@ -1,19 +1,44 @@
+//! MIPS 汇编代码生成器。
+//!
+//! 将经过语法和语义分析的 AST 编译为 MIPS I 汇编代码。
+//! 生成的代码可在 SPIM/MARS 等 MIPS 模拟器上运行。
+//!
+//! ## 运行时约定
+//! - **全局变量**: 分配在 `.data` 段，通过 `la` + 标签名访问
+//! - **局部变量**: 分配在栈上，通过 `$fp`（帧指针）相对寻址
+//! - **过程调用**: 使用 `jal`/`jr $ra`，栈帧保存 `$fp` 和 `$ra`
+//! - **参数传递**: 调用者将实参压栈（从右到左），被调用者通过 `$fp + offset` 读取
+//! - **返回值**: 统一通过 `$v0` 返回
+//! - **临时寄存器**: `$t0` 用于地址计算，`$t7` 用于乘法中间结果，`$t8` 用于全局变量加载
+//!
+//! ## 类型到 MIPS 的映射
+//! - `integer` → 4 字节，`lw`/`sw`
+//! - `char` → 4 字节（栈对齐），`lb`/`sb`，元素步长为 1
+//! - 数组 → 连续分配 `size * count` 字节，下标访问包含指针运算
+//! - 记录 → 字段按声明顺序连续分配，带字段偏移量计算
+
 use std::collections::HashMap;
 
 use crate::ast::nodes::*;
 
-// ===== Codegen Type Representation =====
+// ===== 代码生成类型表示 =====
 
+/// 代码生成阶段的类型表示。
+///
+/// 与语义分析阶段的 `TypeInfo` 独立，便于代码生成器
+/// 按需扩展。支持类型别名解析。
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodegenType {
     Integer,
     Char,
-    Array(Box<CodegenType>, i64, i64),  // elem_type, low, high
-    Record(Vec<(String, CodegenType)>), // (field_name, field_type) — multi-name FieldDefs expanded
+    /// 数组类型：元素类型、下界、上界
+    Array(Box<CodegenType>, i64, i64),
+    /// 记录类型：(字段名, 字段类型) 列表，多名字段已展开
+    Record(Vec<(String, CodegenType)>),
 }
 
 impl CodegenType {
-    /// Byte size for allocating a variable of this type.
+    /// 计算该类型变量的分配大小（字节）。
     fn size_of(&self) -> i32 {
         match self {
             CodegenType::Integer => 4,
@@ -26,7 +51,7 @@ impl CodegenType {
         }
     }
 
-    /// Byte stride for subscript arithmetic. Integer→4, Char→1.
+    /// 数组下标运算时的元素步长（字节）。
     fn element_byte_size(&self) -> i32 {
         match self {
             CodegenType::Integer => 4,
@@ -36,7 +61,9 @@ impl CodegenType {
         }
     }
 
-    /// Precompute (offset, type) for each record field.
+    /// 预计算记录各字段的 (偏移量, 类型)。
+    ///
+    /// 字段按声明顺序依次分配，偏移量从 0 开始累积。
     fn field_offsets(&self) -> HashMap<String, (i32, CodegenType)> {
         let mut offsets = HashMap::new();
         if let CodegenType::Record(fields) = self {
@@ -50,8 +77,11 @@ impl CodegenType {
     }
 }
 
-// ===== Type Resolution from AST =====
+// ===== AST 类型 → 代码生成类型映射 =====
 
+/// 构建类型别名映射表。
+///
+/// 将 TypeDec 中的命名类型展平为 `名字 → TypeBody` 的映射。
 fn build_type_alias_map(type_dec: &TypeDec) -> HashMap<String, TypeBody> {
     let mut aliases = HashMap::new();
     if let TypeDec::Defined(defs) = type_dec {
@@ -62,6 +92,9 @@ fn build_type_alias_map(type_dec: &TypeDec) -> HashMap<String, TypeBody> {
     aliases
 }
 
+/// 将 AST 的 TypeBody 转换为代码生成类型。
+///
+/// `visited` 用于检测循环类型别名（例如 `type A = B; type B = A`）。
 fn type_body_to_codegen(
     body: &TypeBody,
     aliases: &HashMap<String, TypeBody>,
@@ -149,19 +182,23 @@ fn field_type_to_codegen(ft: &FieldTypeDef) -> CodegenType {
     }
 }
 
-// ===== MIPS Context =====
+// ===== MIPS 上下文 =====
 
+/// MIPS 代码生成上下文。
+///
+/// 维护汇编代码字符串、数据段字符串、标签计数器、
+/// 变量偏移量表（嵌套作用域）、变量类型表以及帧大小栈。
 pub struct MipsContext {
     pub code: String,
     pub data: String,
     label_counter: usize,
-    /// Maps variable name to (stack offset, nesting level)
+    /// 变量名 → (栈偏移, 嵌套层级) 映射栈
     var_offsets: Vec<HashMap<String, (i32, usize)>>,
-    /// Maps variable name to its resolved CodegenType
+    /// 变量名 → 代码生成类型映射栈
     var_types: Vec<HashMap<String, CodegenType>>,
-    /// Current stack frame size (accumulated)
+    /// 各作用域的栈帧大小（累积）
     frame_sizes: Vec<i32>,
-    /// Current scope nesting level (0 = global/main)
+    /// 当前嵌套层级（0 = 全局/main）
     nesting_level: usize,
 }
 
@@ -173,11 +210,13 @@ impl MipsContext {
             label_counter: 0,
             var_offsets: vec![HashMap::new()],
             var_types: vec![HashMap::new()],
+            // 全局帧预留 4 字节用于 $ra 保存
             frame_sizes: vec![4],
             nesting_level: 0,
         }
     }
 
+    /// 生成唯一标签（如 `else_0`、`endif_1`）。
     pub fn new_label(&mut self, prefix: &str) -> String {
         let label = format!("{}_{}", prefix, self.label_counter);
         self.label_counter += 1;
@@ -192,6 +231,9 @@ impl MipsContext {
         self.var_offsets.last_mut().unwrap()
     }
 
+    /// 在当前作用域中为变量分配栈空间。
+    ///
+    /// 若变量已在当前作用域声明则跳过。
     pub fn alloc_var(&mut self, name: &str, typ: &CodegenType) {
         if !self.current_scope().contains_key(name) {
             let offset = *self.frame_sizes.last().unwrap();
@@ -206,6 +248,9 @@ impl MipsContext {
         }
     }
 
+    /// 查找变量的栈偏移和声明层级。
+    ///
+    /// 从最内层作用域向外搜索。
     pub fn get_var_offset(&self, name: &str) -> Option<(i32, usize)> {
         for scope in self.var_offsets.iter().rev() {
             if let Some(&val) = scope.get(name) {
@@ -215,6 +260,7 @@ impl MipsContext {
         None
     }
 
+    /// 查找变量的代码生成类型。
     pub fn get_var_type(&self, name: &str) -> Option<CodegenType> {
         for scope in self.var_types.iter().rev() {
             if let Some(typ) = scope.get(name) {
@@ -224,13 +270,16 @@ impl MipsContext {
         None
     }
 
+    /// 进入过程作用域：初始化新的偏移量和类型映射。
     pub fn enter_proc(&mut self) {
         self.nesting_level += 1;
         self.var_offsets.push(HashMap::new());
         self.var_types.push(HashMap::new());
-        self.frame_sizes.push(8); // $fp save + $ra save
+        // 预留 $fp 和 $ra 各 4 字节
+        self.frame_sizes.push(8);
     }
 
+    /// 退出过程作用域。
     pub fn exit_proc(&mut self) {
         self.nesting_level -= 1;
         self.var_offsets.pop();
@@ -246,21 +295,27 @@ impl MipsContext {
         *self.frame_sizes.last().unwrap()
     }
 
+    /// 向代码段追加一条指令。
     pub fn emit(&mut self, s: &str) {
         self.code.push_str(s);
         self.code.push('\n');
     }
 
+    /// 向代码段追加一个标签。
     pub fn emit_label(&mut self, label: &str) {
         self.code.push_str(&format!("{}:\n", label));
     }
 
+    /// 向数据段追加一行。
     pub fn emit_data(&mut self, s: &str) {
         self.data.push_str(s);
         self.data.push('\n');
     }
 }
 
+/// 计算帧指针相对偏移的字符串表示。
+///
+/// 正偏移 → `-$fp`，负偏移 → `+($fp)`。
 fn fp_offset(offset: i32) -> String {
     if offset >= 0 {
         format!("-{}($fp)", offset)
@@ -269,8 +324,10 @@ fn fp_offset(offset: i32) -> String {
     }
 }
 
-/// Globals (level 0) use direct label addressing in .data.
-/// Locals use $fp-relative stack access.
+/// 生成加载变量值到 `$v0` 的 MIPS 代码。
+///
+/// 全局变量（level 0）使用标签寻址，局部变量使用 `$fp` 偏移。
+/// 字符类型使用 `lb`，其他类型使用 `lw`。
 fn emit_load(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, typ: &CodegenType) {
     let instr = if *typ == CodegenType::Char {
         "lb"
@@ -293,6 +350,10 @@ fn emit_load(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, t
     }
 }
 
+/// 生成将 `$v0` 存回变量的 MIPS 代码。
+///
+/// 全局变量使用标签寻址，局部变量使用 `$fp` 偏移。
+/// 字符类型使用 `sb`，其他类型使用 `sw`。
 fn emit_store(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, typ: &CodegenType) {
     let instr = if *typ == CodegenType::Char {
         "sb"
@@ -315,15 +376,23 @@ fn emit_store(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, 
     }
 }
 
-// ===== Main compilation entry point =====
+// ===== 主编译入口 =====
 
+/// 将程序编译为 MIPS 汇编代码字符串。
+///
+/// 返回完整的 `.data` + `.text` 段汇编代码。
+///
+/// # 示例
+/// ```
+/// // compile(&prog) → ".data\n...\n.text\n.globl main\nmain:\n..."
+/// ```
 pub fn compile(prog: &Program) -> String {
     let mut ctx = MipsContext::new();
 
-    // Build global type alias map
+    // 构建全局类型别名映射
     let global_aliases = build_type_alias_map(&prog.decl.types);
 
-    // Data section: allocate global variables
+    // 数据段：分配全局变量
     ctx.emit_data("newline: .asciiz \"\\n\"");
     for var_dec in var_decs(&prog.decl.vars) {
         let resolved = type_desig_to_codegen(&var_dec.type_name, &global_aliases);
@@ -335,6 +404,7 @@ pub fn compile(prog: &Program) -> String {
                 ctx.emit_data("  .align 2");
                 ctx.emit_data(&format!("var_{}: .space {}", name, size));
             }
+            // 全局变量偏移量统一为 0，层级为 0
             ctx.current_scope_mut().insert(name.to_string(), (0, 0));
             ctx.var_types
                 .last_mut()
@@ -343,7 +413,7 @@ pub fn compile(prog: &Program) -> String {
         }
     }
 
-    // Emit program as "main" procedure
+    // 生成 main 标号及序言
     ctx.emit("main:");
     ctx.emit("  addiu $sp, $sp, -4     # space for $ra");
     ctx.emit("  sw $ra, 0($sp)         # save return address");
@@ -357,20 +427,24 @@ pub fn compile(prog: &Program) -> String {
         ));
     }
 
-    // Compile global body
+    // 编译全局过程体
     compile_stm_list(&prog.body.stmts, &mut ctx);
 
-    // Epilogue
+    // 尾言
     ctx.emit("  li $v0, 10             # exit syscall");
     ctx.emit("  syscall");
     ctx.emit("");
 
-    // Compile procedures
+    // 编译过程声明
     compile_procs(&prog.decl.procs, &mut ctx, &global_aliases);
 
     format!(".data\n{}\n.text\n.globl main\n{}", ctx.data, ctx.code)
 }
 
+/// 递归编译过程声明。
+///
+/// 每个过程生成独立的标号（`proc_<name>`）、栈帧管理序言/尾言和过程体。
+/// 类型别名与父作用域合并，支持嵌套过程。
 fn compile_procs(
     proc_dec: &ProcDec,
     ctx: &mut MipsContext,
@@ -384,23 +458,24 @@ fn compile_procs(
 
             ctx.enter_proc();
 
-            // Prologue: save $fp (callee-saved) + $ra
+            // 序言
             ctx.emit("  addiu $sp, $sp, -8     # space for $fp + $ra");
             ctx.emit("  sw $fp, 0($sp)         # save old $fp");
             ctx.emit("  sw $ra, 4($sp)         # save return address");
             ctx.emit("  move $fp, $sp          # frame pointer");
 
-            // Merge local type definitions with inherited ones
+            // 合并局部类型定义与继承的类型别名
             let mut proc_aliases = parent_aliases.clone();
             for (name, body) in build_type_alias_map(&proc.decl.types) {
                 proc_aliases.insert(name, body);
             }
 
-            // Allocate params (in caller's frame, above $fp)
+            // 分配形参（在调用者的帧中，位于 $fp 之上）
             let proc_level = ctx.nesting_level();
             for (i, param) in proc.params.iter().enumerate() {
                 let param_type = type_desig_to_codegen(&param.type_name, &proc_aliases);
                 for name in &param.names {
+                    // 形参位于前 8 字节（$fp + $ra）之上
                     let offset = -(i as i32 * 4 + 8);
                     ctx.current_scope_mut()
                         .insert(name.clone(), (offset, proc_level));
@@ -411,7 +486,7 @@ fn compile_procs(
                 }
             }
 
-            // Local declarations
+            // 局部变量声明
             for var_dec in var_decs(&proc.decl.vars) {
                 let resolved = type_desig_to_codegen(&var_dec.type_name, &proc_aliases);
                 for name in &var_dec.names {
@@ -424,10 +499,10 @@ fn compile_procs(
                 ctx.emit(&format!("  addiu $sp, $sp, -{}     # locals", frame));
             }
 
-            // Body
+            // 过程体
             compile_stm_list(&proc.body.stmts, ctx);
 
-            // Epilogue
+            // 尾言
             if frame > 0 {
                 ctx.emit(&format!(
                     "  addiu $sp, $sp, {}      # deallocate locals",
@@ -439,7 +514,7 @@ fn compile_procs(
             ctx.emit("  addiu $sp, $sp, 8      # deallocate $fp + $ra slots");
             ctx.emit("  jr $ra                  # return");
 
-            // Nested procedures
+            // 嵌套过程
             compile_procs(&proc.decl.procs, ctx, &proc_aliases);
 
             ctx.exit_proc();
@@ -447,11 +522,12 @@ fn compile_procs(
     }
 }
 
-// ===== Selector address computation =====
+// ===== 选择器地址计算 =====
 
-/// Emit MIPS code to compute the runtime address of a VarAccess into $t0.
-/// Handles base variable (global/local), array subscripts, and record fields.
-/// Returns the scalar CodegenType of the final element.
+/// 生成 MIPS 代码以计算 VarAccess 的运行时地址到 `$t0`。
+///
+/// 处理基础变量（全局/局部）、数组下标和记录字段。
+/// 返回最终元素的标量 CodegenType。
 fn emit_var_address(va: &VarAccess, ctx: &mut MipsContext) -> CodegenType {
     let (offset, var_level) = ctx
         .get_var_offset(&va.base)
@@ -460,7 +536,7 @@ fn emit_var_address(va: &VarAccess, ctx: &mut MipsContext) -> CodegenType {
         .get_var_type(&va.base)
         .unwrap_or_else(|| panic!("No type for '{}'", va.base));
 
-    // Load base address into $t0
+    // 将基础地址加载到 $t0
     if var_level == 0 {
         ctx.emit(&format!("  la $t0, var_{}", va.base));
     } else {
@@ -470,8 +546,9 @@ fn emit_var_address(va: &VarAccess, ctx: &mut MipsContext) -> CodegenType {
     walk_selectors(&va.selector, ctx, current_typ)
 }
 
-/// Walk a chain of selectors, emitting code to update $t0 to point to the
-/// final element. Returns the scalar type of the selected element.
+/// 遍历选择器链，生成代码更新 `$t0` 指向最终元素。
+///
+/// 返回所选元素的标量类型。
 fn walk_selectors(
     selectors: &[Selector],
     ctx: &mut MipsContext,
@@ -487,6 +564,7 @@ fn walk_selectors(
                 ctx.emit("  addiu $sp, $sp, -4");
                 ctx.emit("  sw $t0, 0($sp)          # save base address");
                 compile_exp(exp, ctx);
+                // 下标从下界开始，若下界非零则减去偏移
                 if low_val != 0 {
                     ctx.emit(&format!("  addiu $v0, $v0, {}", -low_val));
                 }
@@ -539,18 +617,21 @@ fn walk_selectors(
     current_typ
 }
 
-// ===== Statement compilation =====
+// ===== 语句编译 =====
 
+/// 编译语句列表。
 fn compile_stm_list(stmts: &[Stm], ctx: &mut MipsContext) {
     for stm in stmts {
         compile_stm(stm, ctx);
     }
 }
 
+/// 编译单条语句。
 fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
     match stm {
         Stm::Assign { lhs, rhs, .. } => {
             compile_exp(rhs, ctx);
+            // 无选择器的简单赋值
             if lhs.selector.is_empty() {
                 if let Some((offset, var_level)) = ctx.get_var_offset(&lhs.base) {
                     if let Some(typ) = ctx.get_var_type(&lhs.base) {
@@ -558,6 +639,10 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
                     }
                 }
             } else {
+                // 带选择器（数组下标/记录字段）的赋值：
+                // 1. 保存 RHS 值
+                // 2. 计算 LHS 地址
+                // 3. 恢复 RHS 值并存入计算出的地址
                 ctx.emit("  addiu $sp, $sp, -4");
                 ctx.emit("  sw $v0, 0($sp)          # save rhs value");
                 let lhs_type = emit_var_address(lhs, ctx);
@@ -625,6 +710,7 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
             let _ = compile_exp(exp, ctx);
         }
         Stm::Call { name, args, .. } => {
+            // 实参从右到左压栈（第一个实参最后压入，在栈顶）
             for arg in args.iter().rev() {
                 let _ = compile_exp(arg, ctx);
                 ctx.emit("  addiu $sp, $sp, -4");
@@ -638,13 +724,17 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
     }
 }
 
-// ===== Expression compilation =====
+// ===== 表达式编译 =====
 
+/// 编译表达式，结果存入 `$v0`。
+///
+/// 返回表达式结果类型的 `CodegenType`。
 fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
     match exp {
         Exp::Binary {
             op, left, right, ..
         } => {
+            // 先求值右操作数，压栈保存
             let _ = compile_exp(right, ctx);
             ctx.emit("  addiu $sp, $sp, -4");
             ctx.emit("  sw $v0, 0($sp)          # push right");
@@ -654,6 +744,7 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
             match op {
                 BinOp::Add => ctx.emit("  addu $v0, $v0, $t0"),
                 BinOp::Sub => ctx.emit("  subu $v0, $v0, $t0"),
+                // mul 结果在 $t7 中，需再 move 到 $v0
                 BinOp::Mul => ctx.emit("  mul $t7, $v0, $t0\n  move $v0, $t7"),
                 BinOp::Div => {
                     ctx.emit("  div $v0, $v0, $t0");
@@ -661,6 +752,7 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
                 }
                 BinOp::Lt => ctx.emit("  slt $v0, $v0, $t0"),
                 BinOp::Eq => {
+                    // 相等比较使用条件分支生成 0 或 1
                     let true_label = ctx.new_label("eq_true");
                     let end_label = ctx.new_label("eq_end");
                     ctx.emit(&format!("  beq $v0, $t0, {}", true_label));
@@ -691,6 +783,7 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
                 }
                 CodegenType::Integer
             } else {
+                // 带选择器的变量：先计算地址，再加载值
                 let final_typ = emit_var_address(va, ctx);
                 if final_typ == CodegenType::Char {
                     ctx.emit("  lb $v0, 0($t0)");
@@ -703,6 +796,7 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
     }
 }
 
+/// 提取 VarDec 中的 VarDef 切片。
 fn var_decs(var_dec: &VarDec) -> &[VarDef] {
     match var_dec {
         VarDec::Empty => &[],
@@ -827,7 +921,6 @@ mod tests {
         let asm = compile_source(
             "program p var record integer a; char b end r; begin r.a := 1; r.b := 'z'; write(r.a) end.",
         );
-        // a at offset 0, b at offset 4
         assert!(
             asm.contains("addiu $t0, $t0, 0"),
             "Should have field offset for a"
@@ -845,7 +938,6 @@ mod tests {
         let asm = compile_source(
             "program p var record array[0..4] of integer a end r; begin r.a[2] := 99; write(r.a[2]) end.",
         );
-        // Field a at offset 0, then array subscript with sll
         assert!(
             asm.contains("addiu $t0, $t0, 0"),
             "Should have field offset"
@@ -924,7 +1016,6 @@ mod tests {
     #[test]
     fn test_array_assignment_with_subscript_lhs() {
         let asm = compile_source("program p var array[0..5] of integer a; begin a[3] := 99 end.");
-        // Should save rhs, compute LHS address, restore rhs, store
         assert!(asm.contains("save rhs value"), "Should save rhs");
         assert!(asm.contains("restore rhs value"), "Should restore rhs");
     }

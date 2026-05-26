@@ -1,3 +1,8 @@
+//! AST 节点的格式化显示（Display trait 实现）。
+//!
+//! 将 AST 以树形文本格式输出，使用 Unicode 框线字符（├── └── │）
+//! 直观展示程序的语法结构。主要用于生成 `*_tree.md` 调试文件。
+
 use std::fmt::{self, Display, Formatter};
 
 use super::nodes::*;
@@ -16,6 +21,10 @@ impl Display for Program {
 // ===== DeclarePart =====
 
 impl DeclarePart {
+    /// 格式化声明部分子树。
+    ///
+    /// # 参数
+    /// - `prefix`: 当前行的缩进前缀（用于树形对齐）
     pub fn fmt_node(&self, f: &mut Formatter<'_>, prefix: &str) -> fmt::Result {
         match &self.types {
             TypeDec::Empty => {}
@@ -59,8 +68,8 @@ impl DeclarePart {
 }
 
 impl ProcDef {
+    /// 格式化过程定义的内部内容（形参、局部声明、过程体）。
     fn fmt_inner(&self, f: &mut Formatter<'_>, prefix: &str) -> fmt::Result {
-        // Print params
         if !self.params.is_empty() {
             for param in &self.params {
                 write!(f, "{}├── DecK  ", prefix)?;
@@ -76,9 +85,7 @@ impl ProcDef {
                 writeln!(f)?;
             }
         }
-        // Print local declarations
         self.decl.fmt_node(f, prefix)?;
-        // Print body
         self.body.fmt_node(f, prefix)?;
         Ok(())
     }
@@ -220,7 +227,7 @@ impl Exp {
     }
 }
 
-// ===== TypeBody / TypeDesig display =====
+// ===== TypeBody / TypeDesig 显示 =====
 
 impl TypeBody {
     fn fmt_type_body(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -292,9 +299,10 @@ fn fmt_field_type_def(ftd: &FieldTypeDef, f: &mut Formatter<'_>) -> fmt::Result 
     }
 }
 
-// ===== VarAccess LHS display =====
+// ===== VarAccess 左侧显示 =====
 
 impl VarAccess {
+    /// 格式化赋值语句左侧的变量访问（含选择器链）。
     fn fmt_lhs(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}  IdV", self.base)?;
         for sel in &self.selector {

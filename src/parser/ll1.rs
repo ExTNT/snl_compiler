@@ -1,3 +1,14 @@
+//! LL(1) 表驱动语法分析器。
+//!
+//! 使用预测分析表进行自上而下的语法分析。
+//! 该分析器主要用于验证 SNL 文法确实是 LL(1) 的，
+//! 以及辅助调试。**AST 的实际构建由递归下降分析器（rd）完成。**
+//!
+//! ## 工作原理
+//! 1. 初始化栈，压入起始符号
+//! 2. 循环：弹出栈顶，若为终结符则匹配，若为非终结符则查表展开
+//! 3. 栈空且输入耗尽时分析成功
+
 use crate::ast::nodes::Loc;
 use crate::error::CompileError;
 use crate::lexer::token::{Token, TokenKind};
@@ -5,6 +16,9 @@ use crate::lexer::token::{Token, TokenKind};
 use super::grammar::{self, Grammar, GrammarSymbol, NonTerm};
 use super::parse_table::{self, Ll1Table, normalize};
 
+/// LL(1) 表驱动分析器。
+///
+/// 在构造时即验证文法为 LL(1)，之后可多次调用 `parse()` 分析不同源码。
 pub struct Ll1Parser {
     grammar: Grammar,
     table: Ll1Table,
@@ -14,6 +28,9 @@ pub struct Ll1Parser {
 }
 
 impl Ll1Parser {
+    /// 创建 LL(1) 分析器。
+    ///
+    /// 若文法存在 LL(1) 冲突，返回错误。
     pub fn new() -> Result<Self, Vec<parse_table::Conflict>> {
         let grammar = grammar::encode_grammar();
         let table = parse_table::build_ll1_table(&grammar)?;
@@ -30,10 +47,12 @@ impl Ll1Parser {
         &self.errors
     }
 
-    /// LL(1) table-driven parsing.
-    /// Returns true if parsing succeeded (no syntax errors), false otherwise.
-    /// Full AST construction via LL(1) requires semantic action markers;
-    /// the Recursive Descent parser provides the primary AST construction.
+    /// LL(1) 表驱动分析。
+    ///
+    /// 返回 true 表示分析成功（无语法错误），false 表示存在语法错误。
+    ///
+    /// 注意：该分析器只做语法验证，不构建 AST。
+    /// 完整的 AST 构建由递归下降分析器完成。
     pub fn parse(&mut self, tokens: &[Token]) -> bool {
         self.tokens = tokens.to_vec();
         self.pos = 0;
@@ -65,6 +84,7 @@ impl Ll1Parser {
                     let key = (nt, normalize(&current.kind));
                     if let Some(&prod_idx) = self.table.entries.get(&key) {
                         let prod = &self.grammar.productions[prod_idx];
+                        // 将产生式右部逆序压栈（保证从左到右匹配）
                         for sym in prod.rhs.iter().rev() {
                             stack.push(StackItem::from_sym(sym.clone()));
                         }
@@ -99,6 +119,7 @@ impl Ll1Parser {
     }
 }
 
+/// 分析栈项：终结符或非终结符。
 #[derive(Debug, Clone)]
 enum StackItem {
     T(TokenKind),
@@ -114,6 +135,7 @@ impl StackItem {
     }
 }
 
+/// 比较两个 Token 是否匹配（对于携带值的变体，只比较种类）。
 fn token_matches(expected: &TokenKind, actual: &TokenKind) -> bool {
     use TokenKind::*;
     match (expected, actual) {
@@ -133,7 +155,6 @@ mod tests {
     fn test_ll1_no_conflicts() {
         match Ll1Parser::new() {
             Ok(parser) => {
-                // Verify it can parse a simple program
                 let source = "program p begin write(1) end.";
                 let mut lexer = Lexer::new();
                 let (_tokens, _) = lexer.tokenize(source);
@@ -297,11 +318,8 @@ mod tests {
 
     #[test]
     fn test_ll1_first_follow_sets() {
-        // Verify the grammar can be constructed without conflicts
         let parser = Ll1Parser::new().expect("LL(1) grammar should have no conflicts");
-        // The grammar should have productions
         assert!(parser.grammar.productions.len() > 0);
-        // The parse table should have entries
         assert!(!parser.table.entries.is_empty());
     }
 }

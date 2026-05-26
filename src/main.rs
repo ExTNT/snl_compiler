@@ -1,3 +1,13 @@
+//! SNL 编译器入口点。
+//!
+//! 四阶段编译管线：
+//! 1. 词法分析 → 生成 `*_token.md`
+//! 2. 语法分析 → 生成 `*_tree.md`
+//! 3. 语义分析 → 生成 `*_table.md`
+//! 4. 代码生成 → 输出 MIPS 汇编 `.asm`
+//!
+//! 用法：`snl_compiler <input.snl> [-o <output.asm>]`
+
 use std::collections::HashMap;
 use std::env;
 use std::fmt::Write;
@@ -35,11 +45,11 @@ fn main() {
         }
     };
 
-    // Phase 1: Lexer
+    // ===== 阶段 1: 词法分析 =====
     let mut lexer = Lexer::new();
     let (tokens, lex_errors) = lexer.tokenize(&source);
 
-    // Generate token.md
+    // 生成 token.md
     let token_md = format_token_md(input_path, tokens, lex_errors);
     fs::write(format!("{}_token.md", base_name), &token_md).unwrap_or_else(|e| {
         eprintln!("Warning: could not write token.md: {}", e);
@@ -53,7 +63,7 @@ fn main() {
         process::exit(1);
     }
 
-    // Phase 2: Recursive Descent Parser
+    // ===== 阶段 2: 递归下降语法分析 =====
     let mut parser = RdParser::new(tokens);
     let prog = match parser.parse() {
         Some(p) => p,
@@ -68,7 +78,7 @@ fn main() {
 
     let syntax_errors = parser.errors().to_vec();
 
-    // Generate tree.md (AST + syntax errors)
+    // 生成 tree.md（AST + 语法错误）
     let tree_md = format_tree_md(input_path, &prog, &syntax_errors);
     fs::write(format!("{}_tree.md", base_name), &tree_md).unwrap_or_else(|e| {
         eprintln!("Warning: could not write tree.md: {}", e);
@@ -81,14 +91,14 @@ fn main() {
         }
     }
 
-    // Phase 3: Semantic Analysis
+    // ===== 阶段 3: 语义分析 =====
     let mut analyzer = SemanticAnalyzer::new();
     analyzer.analyze(&prog);
 
     let semantic_errors = analyzer.errors().to_vec();
     let scope_snapshots = analyzer.scope_snapshots().to_vec();
 
-    // Generate table.md (symbol table + semantic errors)
+    // 生成 table.md（符号表 + 语义错误）
     let table_md = format_table_md(input_path, &scope_snapshots, &semantic_errors);
     fs::write(format!("{}_table.md", base_name), &table_md).unwrap_or_else(|e| {
         eprintln!("Warning: could not write table.md: {}", e);
@@ -102,7 +112,7 @@ fn main() {
         process::exit(1);
     }
 
-    // Phase 4: MIPS Code Generation
+    // ===== 阶段 4: MIPS 代码生成 =====
     let asm = mips::compile(&prog);
 
     match fs::write(&output_path, &asm) {
@@ -114,6 +124,7 @@ fn main() {
     }
 }
 
+/// 生成 Token 序列的 Markdown 表格。
 fn format_token_md(
     input_path: &str,
     tokens: &[snl_compiler::lexer::Token],
@@ -157,6 +168,7 @@ fn format_token_md(
     out
 }
 
+/// 生成语法树（AST）的 Markdown 文档。
 fn format_tree_md(
     input_path: &str,
     prog: &snl_compiler::ast::nodes::Program,
@@ -186,6 +198,10 @@ fn format_tree_md(
     out
 }
 
+/// 生成符号表的 Markdown 文档。
+///
+/// 按作用域层级展示所有符号（类型、变量、过程），
+/// 包含名称、种类、类型、形参列表和声明行号。
 fn format_table_md(
     input_path: &str,
     scope_snapshots: &[(usize, HashMap<String, SymbolEntry>)],
@@ -201,7 +217,7 @@ fn format_table_md(
 
     out.push_str(&format!("总作用域数: {}\n\n", scope_snapshots.len()));
 
-    // Display scopes in order: global first, then nested
+    // 按顺序展示作用域：全局优先，然后是嵌套作用域
     out.push_str("| 作用域 | 级别 | 名称 | 种类 | 类型 | 参数 | 行号 |\n");
     out.push_str("|--------|------|------|------|------|------|------|\n");
 

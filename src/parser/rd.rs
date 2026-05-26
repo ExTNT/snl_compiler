@@ -1,7 +1,26 @@
+//! 递归下降语法分析器（Recursive Descent Parser）。
+//!
+//! SNL 编译器的**主解析器**，负责将 Token 序列转换为 AST。
+//! 基于 SNL 文法为每个非终结符编写对应的递归解析函数。
+//!
+//! ## 设计要点
+//! - **直接构建 AST**: 每个解析函数返回对应的 AST 节点
+//! - **向前看 1 个 Token**: 通过 `peek_kind()` 决定进入哪个产生式
+//! - **恐慌模式错误恢复**: `sync()` 在遇到错误时跳过 Token 直到同步点
+//! - **错误容忍**: 解析错误记录到 `errors` 列表，不会中断解析
+//!
+//! ## 与其他模块的关系
+//! - 输入：来自 [`lexer`] 的 Token 序列
+//! - 输出：[`ast::nodes::Program`] 供 [`semantic`] 和 [`codegen`] 使用
+
 use crate::ast::nodes::*;
 use crate::error::CompileError;
 use crate::lexer::token::{Token, TokenKind};
 
+/// 递归下降语法分析器。
+///
+/// 持有 Token 流引用、当前位置和错误列表。
+/// 通过生命周期参数 `'a` 绑定到输入的 Token 序列。
 pub struct RdParser<'a> {
     tokens: &'a [Token],
     pos: usize,
@@ -9,6 +28,7 @@ pub struct RdParser<'a> {
 }
 
 impl<'a> RdParser<'a> {
+    /// 创建分析器，绑定到给定的 Token 序列。
     pub fn new(tokens: &'a [Token]) -> Self {
         RdParser {
             tokens,
@@ -21,20 +41,28 @@ impl<'a> RdParser<'a> {
         &self.errors
     }
 
+    /// 开始解析，返回完整的 `Program` AST。
+    ///
+    /// 解析失败时返回 `None`。
     pub fn parse(&mut self) -> Option<Program> {
         self.parse_program()
     }
 
-    // ===== Helpers =====
+    // ===== 辅助函数 =====
 
+    /// 查看当前 Token（不消费）。
     fn peek(&self) -> &Token {
         &self.tokens[self.pos]
     }
 
+    /// 查看当前 Token 种类（不消费）。
     fn peek_kind(&self) -> &TokenKind {
         &self.tokens[self.pos].kind
     }
 
+    /// 消费并返回当前 Token，指针前移。
+    ///
+    /// 若已到 EOF，不再前移。
     fn advance(&mut self) -> &Token {
         let t = &self.tokens[self.pos];
         if self.pos + 1 < self.tokens.len() {
@@ -43,6 +71,9 @@ impl<'a> RdParser<'a> {
         t
     }
 
+    /// 尝试匹配期望的 Token 种类。
+    ///
+    /// 匹配成功则消费并返回该 Token，失败则记录语法错误并返回 `None`。
     fn match_token(&mut self, expected: TokenKind) -> Option<Token> {
         if *self.peek_kind() == expected {
             Some(self.advance().clone())
@@ -59,6 +90,7 @@ impl<'a> RdParser<'a> {
         }
     }
 
+    /// 获取当前 Token 的源码位置。
     fn loc(&self) -> Loc {
         let t = self.peek();
         Loc {
@@ -67,7 +99,9 @@ impl<'a> RdParser<'a> {
         }
     }
 
-    /// Panic-mode error recovery: skip tokens until we find one in the sync set
+    /// 恐慌模式错误恢复：跳过 Token 直到遇到同步集合中的符号。
+    ///
+    /// 同步集合通常在语句边界处（`;`、`end`、`fi` 等）。
     fn sync(&mut self, sync_tokens: &[TokenKind]) {
         while !sync_tokens.contains(self.peek_kind()) && !matches!(self.peek_kind(), TokenKind::Eof)
         {
@@ -164,7 +198,7 @@ impl<'a> RdParser<'a> {
             _ => return,
         };
         let loc = self.loc();
-        self.advance(); // consume TypeId
+        self.advance(); // 消费 TypeId
         self.match_token(TokenKind::Equal);
         let body = self.parse_type_name();
         self.match_token(TokenKind::Semicolon);
@@ -208,7 +242,8 @@ impl<'a> RdParser<'a> {
                         col: t.col,
                     },
                 ));
-                TypeBody::Base(BaseType::Integer) // error recovery default
+                // 错误恢复：返回 Integer 作为默认类型
+                TypeBody::Base(BaseType::Integer)
             }
         }
     }
@@ -241,6 +276,7 @@ impl<'a> RdParser<'a> {
         self.parse_intc()
     }
 
+    /// 解析整数字面量，失败时返回 0 作为容错默认值。
     fn parse_intc(&mut self) -> i64 {
         match self.peek_kind() {
             TokenKind::IntConst(n) => {
@@ -301,7 +337,6 @@ impl<'a> RdParser<'a> {
 
     fn parse_field_dec_list(&mut self, fields: &mut Vec<FieldDef>) {
         let loc = self.loc();
-        // BaseType | ArrayType
         let typ = match self.peek_kind() {
             TokenKind::Integer | TokenKind::Char => FieldTypeDef::Base(self.parse_base_type()),
             TokenKind::Array => {
@@ -393,6 +428,7 @@ impl<'a> RdParser<'a> {
         self.parse_var_dec_more(defs);
     }
 
+    /// 解析用于变量声明的类型描述符。
     fn parse_type_desig(&mut self) -> TypeDesig {
         match self.peek_kind() {
             TokenKind::Integer => {
@@ -457,14 +493,16 @@ impl<'a> RdParser<'a> {
         }
     }
 
+    /// 解析变量声明的重复部分。
+    ///
+    /// 通过向前看决定是继续解析下一个变量声明还是返回（ε）。
     fn parse_var_dec_more(&mut self, defs: &mut Vec<VarDef>) {
-        // Check if the next tokens suggest another VarDecList
         match self.peek_kind() {
             TokenKind::Integer | TokenKind::Char | TokenKind::Array | TokenKind::Record => {
                 self.parse_var_dec_list(defs);
             }
             TokenKind::Ident(_) => {
-                // Could be a type name identifier — just try it
+                // 可能是类型别名——尝试解析
                 self.parse_var_dec_list(defs);
             }
             _ => {} // ε
@@ -537,7 +575,7 @@ impl<'a> RdParser<'a> {
         }
     }
 
-    // ===== 41. continued: ProcDecMore ::= ε | ProcDeclaration =====
+    // ===== 41. ProcDecMore ::= ε | ProcDeclaration =====
 
     fn parse_proc_dec_more(&mut self, procs: &mut Vec<ProcDef>) {
         if *self.peek_kind() == TokenKind::Procedure {
@@ -569,7 +607,7 @@ impl<'a> RdParser<'a> {
         }
     }
 
-    // ===== 45-54. ParamList, Param =====
+    // ===== 45-54. ParamList, Param 等 =====
 
     fn parse_param_list(&mut self) -> Vec<ParamDef> {
         let mut params = Vec::new();
@@ -579,7 +617,7 @@ impl<'a> RdParser<'a> {
 
     fn parse_param_dec_list(&mut self, params: &mut Vec<ParamDef>) {
         let loc = self.loc();
-        // Check for VAR prefix
+        // 检查 VAR 前缀（引用参数）
         let is_var = if *self.peek_kind() == TokenKind::Var {
             self.advance();
             true
@@ -644,6 +682,7 @@ impl<'a> RdParser<'a> {
     fn parse_stm_more(&mut self, stmts: &mut Vec<Stm>) {
         if *self.peek_kind() == TokenKind::Semicolon {
             self.advance();
+            // 分号后若紧跟结束标记则不再解析新语句
             if !matches!(
                 self.peek_kind(),
                 TokenKind::End
@@ -659,7 +698,7 @@ impl<'a> RdParser<'a> {
         }
     }
 
-    // ===== 61. Stm ::= ConditionalStm | LoopStm | InputStm | OutputStm | ReturnStm | ID AssCall =====
+    // ===== 61. Stm ::= 条件语句/循环语句/输入/输出/返回/ID AssCall =====
 
     fn parse_stm(&mut self) -> Stm {
         let loc = self.loc();
@@ -683,6 +722,7 @@ impl<'a> RdParser<'a> {
                         col: t.col,
                     },
                 ));
+                // 恐慌模式恢复：跳到语句边界
                 self.sync(&[
                     TokenKind::Semicolon,
                     TokenKind::End,
@@ -690,7 +730,7 @@ impl<'a> RdParser<'a> {
                     TokenKind::EndWh,
                     TokenKind::Else,
                 ]);
-                // Return a dummy statement for error recovery
+                // 返回一个空 Read 作为占位语句（容错）
                 Stm::Read {
                     var: String::new(),
                     loc,
@@ -701,14 +741,17 @@ impl<'a> RdParser<'a> {
 
     // ===== 67. AssCall ::= AssignmentRest | CallStmRest =====
 
+    /// 解析以标识符开头的两种可能语句：赋值或过程调用。
+    ///
+    /// 通过向前看一个 Token 区分：
+    /// - `:=`、`[`、`.` → 赋值
+    /// - `(` → 过程调用
     fn parse_ass_call(&mut self, name: String, loc: Loc) -> Stm {
         match self.peek_kind() {
             TokenKind::Assign | TokenKind::LBracket | TokenKind::Dot => {
-                // AssignmentRest
                 self.parse_assignment_rest(name, loc)
             }
             TokenKind::LParent => {
-                // CallStmRest
                 self.parse_call_stm_rest(name, loc)
             }
             _ => {
@@ -849,6 +892,7 @@ impl<'a> RdParser<'a> {
 
     fn parse_act_param_list(&mut self) -> Vec<Exp> {
         let mut args = Vec::new();
+        // 预先检查 `)` 以避免将其误解析为表达式
         if *self.peek_kind() != TokenKind::RParent {
             args.push(self.parse_exp());
             self.parse_act_param_more(&mut args);
@@ -883,7 +927,7 @@ impl<'a> RdParser<'a> {
                 self.advance();
                 BinOp::Eq
             }
-            _ => return left, // ε (no comparison operator)
+            _ => return left, // ε（无比较运算符，直接返回左操作数）
         };
         let loc = self.loc();
         let right = self.parse_exp();
@@ -957,7 +1001,7 @@ impl<'a> RdParser<'a> {
         }
     }
 
-    // ===== 89. Factor ::= ( Exp ) | INTC | Variable =====
+    // ===== 89. Factor ::= ( Exp ) | INTC | CHARC | Variable =====
 
     fn parse_factor(&mut self) -> Exp {
         let loc = self.loc();
@@ -1028,6 +1072,9 @@ impl<'a> RdParser<'a> {
 
     // ===== 93. VariMore ::= ε | [ Exp ] | . FieldVar =====
 
+    /// 解析变量后的可选部分：数组下标或记录字段。
+    ///
+    /// 循环处理多个连续的选择器（如 `.a[2].b`）。
     fn parse_vari_more(&mut self) -> Vec<Selector> {
         let mut selector = Vec::new();
         loop {
@@ -1061,7 +1108,7 @@ impl<'a> RdParser<'a> {
                 if more.is_empty() {
                     result.push(Selector::Field(n));
                 } else {
-                    // FieldVarMore returns [Expr] which means this field has a subscript
+                    // FieldVarMore 返回下标表达式列表，每个生成一个 FieldSubscript
                     for m in more {
                         result.push(Selector::FieldSubscript(n.clone(), Box::new(m)));
                     }
@@ -1085,6 +1132,7 @@ impl<'a> RdParser<'a> {
     }
 }
 
+/// 将 TokenKind 转为人可读的字符串名称（用于错误消息）。
 fn token_name(kind: &TokenKind) -> &'static str {
     match kind {
         TokenKind::Program => "program",
@@ -1312,7 +1360,6 @@ mod tests {
                 else_branch,
                 ..
             } => {
-                // then_branch should contain an If statement
                 match &then_branch.stmts[0] {
                     Stm::If { .. } => {}
                     _ => panic!("Expected nested If"),
@@ -1340,7 +1387,6 @@ mod tests {
 
     #[test]
     fn test_procedure_no_params() {
-        // SNL procedures must have at least one parameter
         let source = "program p procedure q(integer dummy); begin write(0) end begin q(1) end.";
         let (prog, errors) = parse(source);
         assert!(errors.is_empty());

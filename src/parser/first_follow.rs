@@ -1,15 +1,31 @@
+//! FIRST 和 FOLLOW 集合计算。
+//!
+//! 基于不动点迭代算法计算文法的 FIRST 和 FOLLOW 集合，
+//! 并提供预测集合（Predict Set）用于 LL(1) 分析表构建。
+//!
+//! ## 算法
+//! - **FIRST(X)**: 从 X 能推导出的所有终结符串的首终结符集合
+//! - **FOLLOW(X)**: 所有可能出现在 X 之后的终结符集合
+//! - **Predict(A→α)**: 当栈顶为 A 时，若当前输入 Token ∈ Predict(A→α)，
+//!   则应选择产生式 A→α 展开
+//!
+//! 两个集合均通过迭代到不动点（fixpoint）计算，因为产生式之间
+//! 存在相互依赖关系。
+
 use std::collections::{HashMap, HashSet};
 
 use crate::lexer::token::TokenKind;
 
 use super::grammar::{Grammar, GrammarSymbol, NonTerm, Production};
 
+/// FIRST 和 FOLLOW 集合。
 pub struct FirstFollow {
     pub first: HashMap<NonTerm, HashSet<TokenKind>>,
     pub follow: HashMap<NonTerm, HashSet<TokenKind>>,
 }
 
 impl FirstFollow {
+    /// 计算给定文法的 FIRST 和 FOLLOW 集合。
     pub fn compute(grammar: &Grammar) -> Self {
         let nonterms = all_nonterms();
         let mut first: HashMap<NonTerm, HashSet<TokenKind>> =
@@ -17,13 +33,13 @@ impl FirstFollow {
         let mut follow: HashMap<NonTerm, HashSet<TokenKind>> =
             nonterms.iter().map(|nt| (*nt, HashSet::new())).collect();
 
-        // Add EOF to FOLLOW(Program)
+        // FOLLOW(起始符号) 包含 Eof
         follow
             .get_mut(&grammar.start)
             .unwrap()
             .insert(TokenKind::Eof);
 
-        // Fixpoint iteration for FIRST
+        // FIRST 的不动点迭代
         loop {
             let mut changed = false;
             for prod in &grammar.productions {
@@ -40,7 +56,9 @@ impl FirstFollow {
             }
         }
 
-        // Fixpoint iteration for FOLLOW
+        // FOLLOW 的不动点迭代
+        // 规则：若 A → αBβ，则 FIRST(β)\{ε} ⊆ FOLLOW(B)
+        //       若 A → αB 或 β 可推导 ε，则 FOLLOW(A) ⊆ FOLLOW(B)
         loop {
             let mut changed = false;
             for prod in &grammar.productions {
@@ -49,7 +67,7 @@ impl FirstFollow {
                         let beta = &prod.rhs[i + 1..];
                         let beta_first = first_of_string(beta, &first);
 
-                        // Collect lhs_follow before mutable borrow of follow[nt]
+                        // 提前收集 lhs_follow，避免与 follow[nt] 的可变借用冲突
                         let need_lhs_follow = beta_first.contains(&TokenKind::Eof);
                         let lhs_follow: Vec<TokenKind> = if need_lhs_follow {
                             follow[&prod.lhs].iter().cloned().collect()
@@ -83,10 +101,13 @@ impl FirstFollow {
         FirstFollow { first, follow }
     }
 
+    /// 计算产生式的预测集合。
+    ///
+    /// Predict(A→α) = FIRST(α) \ {ε} ∪ (ε ∈ FIRST(α) ? FOLLOW(A) : ∅)
     pub fn predict_set(&self, prod: &Production) -> HashSet<TokenKind> {
         let first_rhs = first_of_string(&prod.rhs, &self.first);
         if first_rhs.contains(&TokenKind::Eof) {
-            // If RHS can derive ε, include FOLLOW(LHS)
+            // RHS 可推导 ε，则加入 FOLLOW(LHS)
             let mut result: HashSet<TokenKind> = first_rhs
                 .into_iter()
                 .filter(|t| *t != TokenKind::Eof)
@@ -101,6 +122,12 @@ impl FirstFollow {
     }
 }
 
+/// 计算符号串的 FIRST 集合。
+///
+/// 对于符号串 X₁X₂...Xₙ：
+/// - FIRST(X₁) ⊆ FIRST(X₁X₂...Xₙ)
+/// - 若 X₁ 可推导 ε，则继续加上 FIRST(X₂)，依此类推
+/// - 若所有符号均可推导 ε，则 ε ∈ FIRST(X₁X₂...Xₙ)
 fn first_of_string(
     symbols: &[GrammarSymbol],
     first: &HashMap<NonTerm, HashSet<TokenKind>>,
@@ -138,6 +165,7 @@ fn first_of_string(
     result
 }
 
+/// 返回所有非终结符的列表。
 fn all_nonterms() -> Vec<NonTerm> {
     use NonTerm::*;
     vec![
@@ -197,7 +225,6 @@ mod tests {
     fn test_first_sets_non_empty() {
         let grammar = encode_grammar();
         let ff = FirstFollow::compute(&grammar);
-        // Every non-terminal should have at least one FIRST token
         for (nt, first_set) in &ff.first {
             assert!(!first_set.is_empty(), "FIRST({:?}) should not be empty", nt);
         }
@@ -207,7 +234,6 @@ mod tests {
     fn test_follow_sets_non_empty() {
         let grammar = encode_grammar();
         let ff = FirstFollow::compute(&grammar);
-        // Every non-terminal should have at least one FOLLOW token
         for (nt, follow_set) in &ff.follow {
             assert!(
                 !follow_set.is_empty(),
@@ -236,7 +262,6 @@ mod tests {
         let grammar = encode_grammar();
         let ff = FirstFollow::compute(&grammar);
         let exp_first = &ff.first[&NonTerm::Exp];
-        // Exp should have IntConst, CharConst, Ident in its FIRST set
         let has_int = exp_first
             .iter()
             .any(|t| matches!(t, TokenKind::IntConst(_)));
@@ -268,7 +293,6 @@ mod tests {
     fn test_no_eof_in_first_of_non_nullable() {
         let grammar = encode_grammar();
         let ff = FirstFollow::compute(&grammar);
-        // For non-nullable non-terminals like IntConst, Eof should not be in their FIRST
         let exp_first = &ff.first[&NonTerm::Exp];
         assert!(
             !exp_first.contains(&TokenKind::Eof),
