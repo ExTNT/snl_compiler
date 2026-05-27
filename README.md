@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-SNL（Small Nested Language）编译器基于 Rust 实现，将 SNL 源程序编译为 MIPS 汇编代码，可在 SPIM/MARS 模拟器上运行。涵盖编译原理课程的完整流程：词法分析 → 语法分析 → 语义分析 → 目标代码生成。
+SNL（Small Nested Language）编译器基于 Rust 实现，将 SNL 源程序编译为 MIPS 汇编代码，可在 SPIM/MARS 模拟器上运行。涵盖编译原理课程的完整流程：词法分析 → 语法分析（递归下降 + LL(1) 验证）→ 语义分析 → 目标代码生成。
 
 ### SNL 语言特性
 
@@ -46,7 +46,7 @@ end.
 flowchart TD
     SRC["SNL源程序 (.snl)"]
     LEX["<b>词法分析</b>"]
-    PARSE["<b>语法分析</b><br/>递归下降 + LL(1)"]
+    PARSE["<b>语法分析</b><br/>递归下降 + LL(1) 验证"]
     SEM["<b>语义分析</b><br/>12种错误检查"]
     CG["<b>目标代码生成</b><br/>全类型支持"]
 
@@ -75,83 +75,55 @@ snl_compiler/
 ├── Cargo.toml
 ├── README.md
 ├── PROGRAM_FLOW.md          # 程序流程详细说明
+├── explain.md               # 关键技术详解
+├── 审计文档.md              # 代码审计与优化报告
 ├── samples/                 # 17 个 SNL 示例程序
-│   ├── hello.snl            #   简单输出
-│   ├── arithmetic.snl       #   算术运算
-│   ├── control.snl          #   条件与循环
-│   ├── factorial.snl        #   递归阶乘
-│   ├── fib.snl              #   斐波那契数列
-│   ├── gcd.snl              #   最大公约数
-│   ├── prime.snl            #   素数判定
-│   ├── power.snl            #   幂运算
-│   ├── sum.snl              #   等差数列求和
-│   ├── char_test.snl        #   字符类型测试
-│   ├── int_array.snl        #   整型数组测试
-│   ├── char_array.snl       #   字符数组测试
-│   ├── rec_test.snl         #   记录测试
-│   ├── rec_array.snl        #   记录含数组字段测试
-│   ├── bubble.snl           #   冒泡排序
-│   ├── selection.snl        #   选择排序
-│   ├── insertion.snl        #   插入排序
-│   └── expected_output.md   #   所有样例预期输出
+│   ├── hello.snl
+│   ├── arithmetic.snl
+│   ├── control.snl
+│   ├── factorial.snl
+│   ├── fib.snl
+│   ├── gcd.snl
+│   ├── prime.snl
+│   ├── power.snl
+│   ├── sum.snl
+│   ├── char_test.snl
+│   ├── int_array.snl
+│   ├── char_array.snl
+│   ├── rec_test.snl
+│   ├── rec_array.snl
+│   ├── bubble.snl
+│   ├── selection.snl
+│   ├── insertion.snl
+│   └── expected_output.md
 └── src/
     ├── main.rs              # 程序入口，命令行接口
     ├── lib.rs               # 模块导出
     ├── error.rs             # 统一错误类型定义
     ├── lexer/               # 词法分析
-    │   ├── token.rs         #   Token 种类与结构
-    │   ├── keyword.rs       #   关键字查找表
-    │   ├── dfa.rs           #   DFA 状态机
-    │   └── mod.rs           #   词法分析器驱动
+    │   ├── token.rs
+    │   ├── keyword.rs
+    │   ├── dfa.rs
+    │   └── mod.rs
     ├── ast/                 # 抽象语法树
-    │   ├── nodes.rs         #   AST 节点类型定义
-    │   ├── display.rs       #   层次化输出
+    │   ├── nodes.rs
+    │   ├── display.rs
     │   └── mod.rs
     ├── parser/              # 语法分析
-    │   ├── rd.rs            #   递归下降分析器
-    │   ├── grammar.rs       #   文法产生式定义
-    │   ├── first_follow.rs  #   FIRST/FOLLOW 集计算
-    │   ├── parse_table.rs   #   LL(1) 分析表构建
-    │   ├── ll1.rs           #   表驱动 LL(1) 分析器
+    │   ├── rd.rs            # 递归下降分析器（主解析器）
+    │   ├── grammar.rs       # 文法产生式定义
+    │   ├── first_follow.rs  # FIRST/FOLLOW 集计算
+    │   ├── parse_table.rs   # LL(1) 分析表构建
+    │   ├── ll1.rs           # 表驱动 LL(1) 分析器
     │   └── mod.rs
     ├── semantic/            # 语义分析
-    │   ├── symbol.rs        #   符号表与作用域栈
-    │   ├── analyzer.rs      #   两遍遍历分析器
+    │   ├── symbol.rs
+    │   ├── analyzer.rs
     │   └── mod.rs
     └── codegen/             # 目标代码生成
-        ├── mips.rs          #   MIPS 汇编生成（全类型支持）
+        ├── mips.rs
         └── mod.rs
 ```
-
----
-
-## 各模块功能
-
-### 词法分析 (src/lexer/)
-
-- **实现**: 基于 DFA 的扫描器，最长匹配策略
-- **识别**: 21 个关键字、标识符、整型/字符常量、单/双字符分界符、注释
-- **测试**: 28 个用例
-
-### 语法分析 (src/parser/)
-
-- **递归下降** (`rd.rs`): 为每个非终结符编写解析函数，恐慌模式错误恢复
-- **LL(1) 表驱动** (`ll1.rs`): FIRST/FOLLOW 不动点迭代，左因子化消除冲突
-- **测试**: 35 个用例
-
-### 语义分析 (src/semantic/)
-
-- **两遍遍历**: 第一遍构建符号表（嵌套作用域栈），第二遍类型检查
-- **12 种语义错误**: 重复定义、未声明、类别错误、下标越界、类型不兼容等
-- **测试**: 22 个用例
-
-### 代码生成 (src/codegen/)
-
-- **全类型支持**: integer、char、array、record 及类型别名
-- **类型感知存取**: `lb`/`sb` (char) vs `lw`/`sw` (integer)
-- **类型感知 I/O**: syscall 12/11 (char) vs 5/1 (integer)
-- **选择器地址计算**: `emit_var_address` 处理数组下标、记录字段及嵌套组合
-- **测试**: 37 个用例
 
 ---
 
@@ -200,55 +172,69 @@ cargo test codegen     # 代码生成 (37 个用例)
 
 ## 样例程序
 
-### 基础样例
-
-| 程序 | 输出 | 说明 |
-|------|------|------|
-| `hello.snl` | `42` | 简单输出 |
-| `arithmetic.snl` | `10` `15` | 算术运算 |
-| `control.snl` | `11`... | 条件与循环 (死循环) |
-
-### 算法样例
-
-| 程序 | 输出 | 说明 |
-|------|------|------|
-| `fib.snl` | `55` | 斐波那契数列 |
-| `gcd.snl` | `6` | 最大公约数 |
-| `prime.snl` | `1` | 素数判定 |
-| `power.snl` | `256` | 幂运算 (2^8) |
-| `sum.snl` | `55` | 等差数列求和 |
-| `factorial.snl` | `120` | 递归阶乘 (5!) |
-
-### 类型测试
-
-| 程序 | 输出 | 说明 |
-|------|------|------|
-| `char_test.snl` | `A` `B` | char 变量赋值/输出 |
-| `int_array.snl` | `2` `6` `10` | 整型数组下标访问 |
-| `char_array.snl` | `H` `e` `l` `l` `o` | 字符数组 |
-| `rec_test.snl` | `100` `X` | 记录 (int + char) |
-| `rec_array.snl` | `0` `20` `40` `5` | 记录含数组字段 |
-
-### 排序算法
-
-| 程序 | 输出 | 说明 |
-|------|------|------|
-| `bubble.snl` | `12` `22` `25` `34` `64` | 冒泡排序 |
-| `selection.snl` | `12` `22` `25` `34` `64` | 选择排序 |
-| `insertion.snl` | `12` `22` `25` `34` `64` | 插入排序 |
+| 类别 | 程序 | 输出 | 说明 |
+|------|------|------|------|
+| 基础 | `hello.snl` | `42` | 简单输出 |
+| 基础 | `arithmetic.snl` | `10` `15` | 算术运算 |
+| 基础 | `control.snl` | `11`... | 条件与循环 (死循环) |
+| 算法 | `factorial.snl` | `120` | 递归阶乘 (5!) |
+| 算法 | `fib.snl` | `55` | 斐波那契数列 |
+| 算法 | `gcd.snl` | `6` | 最大公约数 |
+| 算法 | `prime.snl` | `1` | 素数判定 |
+| 算法 | `power.snl` | `256` | 幂运算 (2^8) |
+| 算法 | `sum.snl` | `55` | 等差数列求和 |
+| 类型 | `char_test.snl` | `A` `B` | char 变量赋值/输出 |
+| 类型 | `int_array.snl` | `2` `6` `10` | 整型数组下标访问 |
+| 类型 | `char_array.snl` | `H` `e` `l` `l` `o` | 字符数组 |
+| 类型 | `rec_test.snl` | `100` `X` | 记录 (int + char) |
+| 类型 | `rec_array.snl` | `0` `20` `40` `5` | 记录含数组字段 |
+| 排序 | `bubble.snl` | `12` `22` `25` `34` `64` | 冒泡排序 |
+| 排序 | `selection.snl` | `12` `22` `25` `34` `64` | 选择排序 |
+| 排序 | `insertion.snl` | `12` `22` `25` `34` `64` | 插入排序 |
 
 ---
 
 ## 错误处理
 
-编译器收集尽可能多的错误后统一报告:
-
 ```
+=== Lexical Errors ===
+  Line 3:1 — Unterminated comment
+
 === Syntax Errors ===
   Line 5:10 — Expected ;, found Ident("v2")
-  Line 8:5 — Unexpected token End at start of statement
+
+=== LL(1) Verification Errors ===
+  Line 5:10 — LL(1): Expected Semicolon, found Ident("v2")
+Warning: LL(1) verification failed (RD parse succeeded)
 
 === Semantic Errors ===
   Line 10:5 — Undeclared identifier 'z'
-  Line 12:5 — Assignment type mismatch
+
+=== Codegen Errors ===
+  [codegen] Unknown variable 'x'
 ```
+
+| 错误阶段 | 处理策略 |
+|---------|---------|
+| 词法错误 | 立即退出（后续阶段无法处理） |
+| 语法错误 | 收集但不阻止（AST 可能不完整，继续语义分析） |
+| LL(1) 验证 | 文法冲突致命退出；验证不匹配仅警告（RD 已成功构建 AST） |
+| 语义错误 | 收集后退出（代码生成需要正确类型信息） |
+| 代码生成错误 | 收集后退出（汇编代码不完整） |
+
+---
+
+## 审计与优化
+
+本项目经过全面代码审计（2026-05），共发现 120+ 个问题，修复 22 个关键问题：
+
+| 类别 | 修复 | 关键项 |
+|------|------|--------|
+| **严重缺陷** | 7 | 重复定义检测、类型别名解析、Record 多名字段、孤 `:` Token、整数溢出 |
+| **性能优化** | 7 | 引用返回、按需查找、内联优化、ASCII 转换、借用代替克隆 |
+| **安全性** | 3 | 尾递归→循环、panic→CompileError、unwrap→expect |
+| **代码质量** | 5 | Option 返回类型、Display/Error 实现、ID 列表去重、LL(1) 恢复 |
+
+全部 17 个样例程序通过 SPIM 验证，122 个测试通过。
+
+详细报告：**`审计文档.md`**。

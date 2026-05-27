@@ -1,12 +1,14 @@
 # SNL 编译器程序流程说明
 
+> 本文档反映审计优化后的代码状态 (2026-05-28)
+
 ## 1. 整体架构
 
 ```mermaid
 flowchart TD
     SRC["SNL 源程序 (.snl)"]
     LEX["<b>词法分析 (Lexer)</b>"]
-    PARSE["<b>语法分析 (Parser)</b><br/>递归下降 + LL(1)"]
+    PARSE["<b>语法分析 (Parser)</b><br/>递归下降 + LL(1) 验证"]
     SEM["<b>语义分析 (Semantic)</b>"]
     CG["<b>代码生成 (Codegen)</b>"]
 
@@ -24,7 +26,6 @@ flowchart TD
     LEX -.-> TOKEN
     PARSE -.-> TREE
     SEM -.-> TABLE
-    SEM -.->|"语义错误信息"| ERR["语义错误信息"]
 ```
 
 四个阶段均生成诊断输出 Markdown 文件，便于分步检查编译中间结果。
@@ -34,27 +35,40 @@ flowchart TD
 ```mermaid
 flowchart TD
     START([开始]) --> READ[读取 .snl 源文件]
-    READ --> P1["Phase 1: 词法分析"]
+    READ --> P1["阶段 1: 词法分析"]
     P1 --> P1_OUT[输出 token.md]
-    P1_OUT --> P1_ERR{有错误?}
+    P1_OUT --> P1_ERR{词法错误?}
     P1_ERR -->|是| EXIT1[打印错误并退出]
-    P1_ERR -->|通过| P2["Phase 2: 语法分析 (递归下降)"]
+    P1_ERR -->|通过| P2["阶段 2: 递归下降语法分析"]
     P2 --> P2_OUT[输出 tree.md]
-    P2_OUT --> P2_ERR{有错误?}
-    P2_ERR -->|是| PRINT[打印错误]
-    P2_ERR -->|否| P3["Phase 3: 语义分析 (两遍遍历)"]
-    PRINT --> P3
+    P2_OUT --> P2_ERR{语法错误?}
+    P2_ERR -->|是| PRINT[打印语法错误]
+    P2_ERR -->|否| P25["阶段 2.5: LL(1) 文法验证"]
+    PRINT --> P25
+    P25 --> P25_ERR{文法冲突?}
+    P25_ERR -->|是| EXIT_LL1[打印冲突并退出]
+    P25_ERR -->|否| P25_WARN{验证错误?}
+    P25_WARN -->|是| PRINT_WARN[打印 LL(1) 警告]
+    P25_WARN -->|否| P3["阶段 3: 语义分析"]
+    PRINT_WARN --> P3
     P3 --> P3_OUT[输出 table.md]
-    P3_OUT --> P3_ERR{有错误?}
+    P3_OUT --> P3_ERR{语义错误?}
     P3_ERR -->|是| EXIT2[打印错误并退出]
-    P3_ERR -->|通过| P4["Phase 4: MIPS 代码生成"]
-    P4 --> WRITE[写入 .asm 文件]
+    P3_ERR -->|通过| P4["阶段 4: MIPS 代码生成"]
+    P4 --> P4_ERR{代码生成错误?}
+    P4_ERR -->|是| EXIT3[打印错误并退出]
+    P4_ERR -->|通过| WRITE[写入 .asm 文件]
 ```
+
+**关键改进**:
+- LL(1) 验证作为**必需阶段**运行，文法冲突致命退出，验证不匹配产生警告
+- 代码生成返回 `Result`，panic 已完全消除
+- 所有错误报告使用统一的 `CompileError` 类型（含 `Display` 和 `Error` trait 实现）
 
 ## 3. 词法分析模块 (src/lexer/)
 
 **输入**: SNL 源程序字符串
-**输出**: Token 序列
+**输出**: Token 序列 + 词法错误列表
 
 ```mermaid
 flowchart LR
@@ -75,7 +89,11 @@ flowchart LR
 
 **最长匹配策略**: DFA 持续读入直到遇到不能继续的字符，回溯到上一个接受状态。
 
-**识别的 Token 种类**: 21 个关键字、标识符、整型常量、字符常量、单/双字符分界符、EOF
+**审计后的改进**:
+- 关键字查找使用 `to_ascii_lowercase()`（原为 `to_lowercase()`），避免 Unicode 开销
+- 孤立的 `:` 不再产生虚假的 `Assign` token（状态重置为 Start，返回 None）
+- 整数溢出产生明确错误（`.expect()` 替代 `unwrap_or(0)`）
+- 识别的 Token 种类: 21 个关键字、标识符、整型常量、字符常量、单/双字符分界符、EOF
 
 ## 4. 语法分析模块 (src/parser/)
 
@@ -88,9 +106,9 @@ flowchart LR
 flowchart TD
     TOKENS["Token 序列"] --> PP["parse_program"]
     PP --> PDP["parse_declare_part"]
-    PDP --> PTD["parse_type_dec<br/>(类型声明)"]
-    PDP --> PVD["parse_var_dec<br/>(变量声明)"]
-    PDP --> PPD["parse_proc_dec<br/>(过程声明, 递归)"]
+    PDP --> PTD["parse_type_dec"]
+    PDP --> PVD["parse_var_dec"]
+    PDP --> PPD["parse_proc_dec (递归)"]
     PP --> PPB["parse_program_body"]
     PPB --> PSL["parse_stm_list"]
     PSL --> PIF["parse_if_stm"]
@@ -98,7 +116,7 @@ flowchart TD
     PSL --> PRW["parse_read / parse_write"]
     PSL --> PRET["parse_return_stm"]
     PSL --> PAC["parse_assign_or_call"]
-    PSL --> PE["parse_exp<br/>(递归下降处理优先级)"]
+    PSL --> PE["parse_exp (递归下降处理优先级)"]
 ```
 
 **表达式优先级** (由松到紧):
@@ -107,40 +125,44 @@ flowchart LR
     RE["RelExp (&lt;, =)"] --> EXP["Exp (+, -)"] --> TERM["Term (*, /)"] --> FAC["Factor (常量/变量/括号)"]
 ```
 
-**恐慌模式错误恢复**: 遇到语法错误时跳过 Token 直到同步符号 (`;`, `end`, `fi`, `endwh`)
+**审计后的改进**:
+- `parse_proc_name`、`parse_invar`、`parse_variable` 返回 `Option`，空字符串不再进入 AST
+- `parse_input_stm` 在 `parse_invar` 失败时调用 `sync()` 进行恐慌模式恢复
+- 10 个尾递归 `_more` 函数全部转换为 `while` 循环（消除栈溢出风险）
+- 三个重复的 ID 列表解析器合并为 `parse_id_list`
 
 ### 4.2 LL(1) 分析器 (ll1.rs)
 
 **输入**: Token 序列
-**输出**: 语法错误检查信息
+**输出**: LL(1) 语法错误信息
 
 ```mermaid
 flowchart LR
-    G["文法定义<br/>(grammar.rs)"] --> FF["FIRST/FOLLOW 计算<br/>(first_follow.rs)"]
-    FF --> PT["分析表构建<br/>(parse_table.rs)"]
-    PT --> LL1["表驱动解析<br/>(ll1.rs)"]
+    G["文法定义 (grammar.rs)"] --> FF["FIRST/FOLLOW 计算 (first_follow.rs)"]
+    FF --> PT["分析表构建 (parse_table.rs)"]
+    PT --> LL1["表驱动解析 (ll1.rs)"]
 ```
 
-**文法规模**: ~70 条产生式, 40+ 个非终结符
-
-**左因子化**: `Stm → ID AssignRest` 与 `Stm → ID ( ActParamList )` 共用 `Ident` 前缀，引入 `AssCall` 非终结符消除冲突。
+**审计后的改进**:
+- LL(1) 验证已恢复为**生产编译必需阶段**（不再 `#[cfg(test)]`）
+- 文法冲突 → `process::exit(1)`（编译器 bug）
+- 验证不匹配 → 警告输出（RD 解析器已成功构建 AST）
+- 错误恢复路径添加了边界检查（防止越界 panic）
 
 ## 5. 语义分析模块 (src/semantic/)
 
 **输入**: 抽象语法树 (AST)
 **输出**: 语义错误信息 + 符号表
 
-**两遍遍历**:
-
 ```mermaid
 flowchart TD
     AST["AST"] --> PASS1["第一遍: 符号表构建"]
-    PASS1 --> GLOBAL["全局作用域: 类型名、全局变量、过程名"]
-    PASS1 --> ENTER["进入过程体: 压入新作用域 (嵌套层级 +1)"]
-    PASS1 --> EXIT["退出过程体: 弹出作用域 (快照保存)"]
+    PASS1 --> GLOBAL["全局作用域"]
+    PASS1 --> ENTER["进入过程体: 压入新作用域"]
+    PASS1 --> EXIT["退出过程体: 弹出 + 快照保存"]
     AST --> PASS2["第二遍: 语义检查"]
     PASS2 --> E1["1. 标识符重复定义"]
-    PASS2 --> E2["2. 无声明的标识符"]
+    PASS2 --> E2["2. 未声明的标识符"]
     PASS2 --> E3["3. 标识符类别错误"]
     PASS2 --> E4["4. 数组下标越界"]
     PASS2 --> E5["5. 数组成员/域变量引用不合法"]
@@ -153,15 +175,15 @@ flowchart TD
     PASS2 --> E12["12. 运算符分量类型不兼容"]
 ```
 
-**作用域快照**: 每次 `exit_scope()` 前克隆当前作用域，保存到 `scope_snapshots` 列表中，用于诊断输出。
-
-**词法作用域**: 查找标识符时从最内层作用域向外搜索。
+**审计后的关键修复**:
+- **错误 1 现正确触发**: 新增 `insert_symbol()` 方法，重复定义时调用 `self.error()`（此前被 `let _ =` 静默丢弃）
+- **类型别名解析**: 新增 `resolve_type()` 方法递归展开 `Named` 类型；`types_compatible` 调用前自动解析
+- **Record 多名字段**: `.flat_map()` 为每个字段名创建独立 `FieldInfo`（此前仅取 `first()`）
+- **选择器解析**: `resolve_selector()` 现在正确处理 `TypeInfo::Named` 变体
 
 ## 6. 目标代码生成模块 (src/codegen/mips.rs)
 
 ### 6.1 类型系统
-
-支持 SNL 全部四种数据类型:
 
 | 类型 | 分配大小 | 存取指令 | I/O 系统调用 |
 |------|---------|---------|------------|
@@ -170,11 +192,11 @@ flowchart TD
 | `array[lo..hi] of T` | (hi-lo+1) × elem_size | 下标计算 + `lw`/`sw`/`lb`/`sb` | — |
 | `record ... end` | 字段大小之和 | 偏移量 + `lw`/`sw`/`lb`/`sb` | — |
 
-**关键实现**:
-- `CodegenType`: 内部类型表示, 含 `size_of()`, `element_byte_size()`, `field_offsets()`
-- `emit_var_address()`: 运行时计算 `VarAccess` (含数组下标和记录字段选择器) 地址到 `$t0`
-- 类型别名通过 `build_type_alias_map()` 解析
-- 数组元素大小: integer → `sll` 乘以 4, char → 不位移 (字节偏移)
+**审计后的性能优化**:
+- `get_var_type()`: 返回 `&CodegenType` 引用（原为克隆整个类型）
+- `field_offset()`: 按需遍历查找（原为构建完整 HashMap）
+- `fp_offset`: 内联到 emit 函数中（原为独立函数，每次调用分配 String）
+- `mul`: 单指令 `mul $v0, $v0, $t0`（原为 `mul $t7, $v0, $t0; move $v0, $t7`）
 
 ### 6.2 总体流程
 
@@ -185,16 +207,16 @@ flowchart TD
     DATA --> DATA_GV["全局变量: var_X: .word 0 / .space N"]
     DATA --> DATA_NL["换行串: newline: .asciiz '\n'"]
     PROG --> MAIN["main 过程"]
-    MAIN --> MAIN_P["序言: 保存 $ra, 设置 $fp, 分配局部变量"]
+    MAIN --> MAIN_P["序言: 保存 $ra, 设置 $fp"]
     MAIN --> MAIN_B["编译语句体"]
     MAIN --> MAIN_E["尾声: exit syscall (v0=10)"]
     PROG --> PROC["所有 procedure"]
-    PROC --> PROC_P["序言: 保存 $fp + $ra, 设置 $fp, 分配局部变量"]
-    PROC --> PROC_A["合并局部类型别名 (局部覆盖外层)"]
-    PROC --> PROC_PARAM["分配参数 (调用者栈帧, $fp 上方)"]
+    PROC --> PROC_P["序言: 保存 $fp + $ra"]
+    PROC --> PROC_A["合并局部类型别名"]
+    PROC --> PROC_PARAM["分配参数"]
     PROC --> PROC_B["编译语句体"]
     PROC --> PROC_R["递归编译嵌套过程"]
-    PROC --> PROC_E["尾声: 释放局部变量, 恢复 $fp/$ra, jr $ra"]
+    PROC --> PROC_E["尾声: 恢复 $fp/$ra, jr $ra"]
 ```
 
 ### 6.3 MIPS 栈帧布局
@@ -216,64 +238,15 @@ procedure 栈帧:
 | 变量层级 | 存储位置 | 访问方式 |
 |---------|---------|---------|
 | 全局变量 (level 0) | `.data` 段 | `la $t8, var_X` → `lw/sw/lb/sb $v0, 0($t8)` |
-| 局部变量/参数 (level > 0) | 栈上 `$fp` 相对 | `lw/sw/lb/sb $v0, offset($fp)` |
+| 局部变量 (level > 0) | 栈上 `$fp` 相对 | `lw/sw/lb/sb $v0, offset($fp)` |
 
-### 6.5 表达式编译
+### 6.5 代码生成错误处理
 
-```mermaid
-flowchart TD
-    subgraph BinOp["二元运算"]
-        R["编译右操作数 → $v0"] --> PUSH["push $v0 到栈"]
-        PUSH --> L["编译左操作数 → $v0"]
-        L --> POP["pop 到 $t0"]
-        POP --> EXEC["执行运算: $v0 = $v0 op $t0"]
-    end
-    subgraph VarAccess["变量访问 (含选择器)"]
-        SIMPLE["简单变量"] --> LOAD["emit_load (直接 lw/lb)"]
-        COMPLEX["有下标/字段"] --> EVA["emit_var_address → $t0"]
-        EVA --> LOAD2["lw/lb $v0, 0($t0)"]
-        EVA --> AS["ArraySubscript: 下标→$v0, 减低下界, 乘元素大小, addu $t0"]
-        EVA --> FLD["Field: 加字段偏移到 $t0"]
-        EVA --> FS["FieldSubscript: 加字段偏移 + 数组下标计算"]
-    end
-```
-
-结果约定: 表达式结果始终在 $v0 中
-
-### 6.6 语句编译对照表
-
-| SNL 语句 | MIPS 实现 |
-|---------|----------|
-| `x := exp` | 编译 RHS → $v0, 简单变量用 emit_store, 有选择器则保存 RHS → emit_var_address → 恢复 RHS → sw/sb |
-| `if cond then A else B fi` | 编译 cond → slt/beq, `beqz` 跳 else, `j` 跳过 else |
-| `while cond do body endwh` | loop 标签 + `beqz` 跳 endloop + `j loop` |
-| `read(x)` | syscall: v0=5 (int) 或 v0=12 (char), 结果存入变量 |
-| `write(exp)` | 编译 exp → $a0, syscall: v0=1 (int) 或 v0=11 (char), 加 v0=4 输出换行 |
-| `return(exp)` | 编译 exp, 结果留在 $v0 |
-| `proc(args)` | 参数逆序压栈, `jal proc_name`, 调用后弹栈 |
-
-### 6.7 过程调用完整序列
-
-```mermaid
-sequenceDiagram
-    participant Caller as 调用者
-    participant Callee as 被调用者
-
-    Caller->>Caller: 参数逆序压栈 (addiu + sw)
-    Caller->>Callee: jal proc_name
-    Callee->>Callee: addiu $sp, $sp, -8
-    Callee->>Callee: sw $fp, 0($sp)
-    Callee->>Callee: sw $ra, 4($sp)
-    Callee->>Callee: move $fp, $sp
-    Callee->>Callee: addiu $sp, $sp, -N (分配局部变量)
-    Note over Callee: ...执行过程体...
-    Callee->>Callee: addiu $sp, $sp, N (释放局部变量)
-    Callee->>Callee: lw $fp, 0($sp)
-    Callee->>Callee: lw $ra, 4($sp)
-    Callee->>Callee: addiu $sp, $sp, 8
-    Callee->>Caller: jr $ra (返回)
-    Caller->>Caller: addiu $sp, $sp, 4×N (弹出参数)
-```
+审计后 `compile()` 返回 `Result<String, Vec<CompileError>>`，全部 10 处 `panic!()` 已消除：
+- 6 处运行时 panic → `ctx.error(...)` + 安全默认值（`CodegenType::Integer`、偏移 0）
+- 4 处类型转换 panic → `errors.push(CompileError::codegen(...))`
+- 8 处 `unwrap()` → `.expect("... should never be empty")`
+- 新增 `ErrorKind::Codegen` 错误变体
 
 ## 7. 数据流总览 (以 factorial 为例)
 
@@ -294,10 +267,13 @@ sequenceDiagram
     decl: DeclarePart { vars: [result, n], procs: [fact] }
     body: StmList [Assign, Call, Write] }
   │
+  ▼ LL(1) 验证 (文法冲突检查 + 表驱动解析)
+  │   (静默通过，无冲突/验证错误)
   ▼ 输出 tree.md
 语义分析:
-  ✓ 符号表: result(global), n(global), fact(proc, param=m), m(local), temp(local)
+  ✓ 符号表: result, n, fact(proc), m(param), temp(local)
   ✓ 类型检查通过
+  ✓ 重复定义检测: 无重复
   │
   ▼ 输出 table.md
 代码生成 (.asm):
@@ -320,20 +296,24 @@ sequenceDiagram
 
 ### 8.1 `$fp` 被调用者保存
 
-`$fp` (寄存器 `$30`/`$s8`) 属于被调用者保存寄存器。过程序言保存旧的 `$fp`，尾声恢复，是支持嵌套/递归调用时参数正确寻址的关键。
+`$fp` 属于被调用者保存寄存器。过程序言保存旧的 `$fp`，尾声恢复，是支持嵌套/递归调用时参数正确寻址的关键。
 
 ### 8.2 全局变量放在 `.data` 段
 
-全局变量在 `.data` 段声明为带标签的数据，通过 `la $t8, var_X` 访问，避免了静态链 (static link) 的复杂实现。数组和记录使用 `.space N` 分配，且添加 `.align 2` 确保字对齐。
+全局变量在 `.data` 段声明为带标签的数据，通过 `la $t8, var_X` 访问。数组和记录使用 `.space N` 分配，添加 `.align 2` 确保字对齐。
 
 ### 8.3 `$v0` 作为表达式结果寄存器
 
-所有表达式计算结果统一放在 `$v0` 中。对于乘法运算，使用 `$t7` 作为中间目标寄存器 (`mul $t7, $v0, $t0; move $v0, $t7`)。
+所有表达式计算结果统一放在 `$v0` 中。乘法使用单指令 `mul $v0, $v0, $t0`。
 
 ### 8.4 类型信息从 AST 派生
 
-代码生成器不依赖语义分析器的符号表（其作用域在分析完成后已弹出），而是从 AST 声明节点直接推导类型信息，通过 `build_type_alias_map()` + `type_desig_to_codegen()` 解析。
+代码生成器不依赖语义分析器的符号表，而是从 AST 声明节点直接推导类型信息。
 
 ### 8.5 `$t0` 保存/恢复
 
-`emit_var_address` 使用 `$t0` 追踪运行时地址。由于表达式编译 (`compile_exp`) 的 Binary 分支也会使用 `$t0` 作为临时寄存器，在数组下标和记录字段下标的表达式求值前，必须将 `$t0` 压栈保存，求值后恢复。
+`emit_var_address` 使用 `$t0` 追踪运行时地址。表达式编译 (`compile_exp`) 的 Binary 分支也使用 `$t0`，因此在数组下标和字段下标的表达式求值前，必须将 `$t0` 压栈保存，求值后恢复。
+
+### 8.6 LL(1) 验证作为必需阶段
+
+LL(1) 表驱动解析器在编译管线中运行，文法冲突致命退出（编译器 bug），验证不匹配产生警告（RD 解析器已成功构建 AST）。`Ll1Parser` 使用 `&[Token]` 借用，零拷贝。

@@ -45,7 +45,7 @@ const KEYWORDS: &[KeywordEntry] = &[
 /// # 返回
 /// 匹配的 TokenKind（关键字或 `Ident`）
 pub fn lookup_keyword(ident: &str) -> TokenKind {
-    let lower = ident.to_lowercase();
+    let lower = ident.to_ascii_lowercase();
     KEYWORDS
         .binary_search_by(|(kw, _)| kw.cmp(&lower.as_str()))
         .map(|i| KEYWORDS[i].1.clone())

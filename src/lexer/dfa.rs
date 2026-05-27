@@ -113,7 +113,7 @@ impl Dfa {
                 })
             }
             DfaState::InNumber => {
-                let val: i64 = self.lexeme.parse().unwrap_or(0);
+                let val: i64 = self.lexeme.parse().expect("integer literal parse failed");
                 Some(DfaResult {
                     kind: TokenKind::IntConst(val),
                     line: self.line,
@@ -218,7 +218,7 @@ impl Dfa {
             self.lexeme.push(ch);
             None
         } else {
-            let val: i64 = self.lexeme.parse().unwrap_or(0);
+            let val: i64 = self.lexeme.parse().expect("integer literal parse failed");
             self.state = DfaState::Done;
             Some(DfaResult {
                 kind: TokenKind::IntConst(val),
@@ -229,11 +229,10 @@ impl Dfa {
         }
     }
 
-    /// `InAssign` 状态：':' 之后的字符决定是 `:=` 还是孤立的 `:`。
     fn in_assign(&mut self, ch: char) -> Option<DfaResult> {
-        self.state = DfaState::Done;
         if ch == '=' {
-            // ":" 后跟 "=" → 完整赋值符，不回溯
+            // 完整赋值符 ":="，已消费 = 
+            self.state = DfaState::Done;
             Some(DfaResult {
                 kind: TokenKind::Assign,
                 line: self.line,
@@ -241,13 +240,10 @@ impl Dfa {
                 backtrack: false,
             })
         } else {
-            // 孤立的 ':' — 在 SNL 中无效
-            Some(DfaResult {
-                kind: TokenKind::Assign,
-                line: self.line,
-                col: self.col,
-                backtrack: true,
-            })
+            // 孤立的 ':' — 在 SNL 中无效，丢弃（不回退，ch 会随调用方 None 分支前进）
+            self.state = DfaState::Start;
+            self.lexeme.clear();
+            None
         }
     }
 

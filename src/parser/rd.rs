@@ -209,7 +209,7 @@ impl<'a> RdParser<'a> {
     // ===== 9. TypeDecMore ::= ε | TypeDecList =====
 
     fn parse_type_dec_more(&mut self, defs: &mut Vec<TypeDef>) {
-        if matches!(self.peek_kind(), TokenKind::Ident(_)) {
+        while matches!(self.peek_kind(), TokenKind::Ident(_)) {
             self.parse_type_dec_list(defs);
         }
     }
@@ -356,7 +356,7 @@ impl<'a> RdParser<'a> {
     }
 
     fn parse_field_dec_more(&mut self, fields: &mut Vec<FieldDef>) {
-        if matches!(
+        while matches!(
             self.peek_kind(),
             TokenKind::Integer | TokenKind::Char | TokenKind::Array
         ) {
@@ -371,20 +371,17 @@ impl<'a> RdParser<'a> {
         if let TokenKind::Ident(name) = self.peek_kind() {
             names.push(name.clone());
             self.advance();
-            self.parse_id_more(&mut names);
-        }
-        names
-    }
-
-    fn parse_id_more(&mut self, names: &mut Vec<String>) {
-        if *self.peek_kind() == TokenKind::Comma {
-            self.advance();
-            if let TokenKind::Ident(name) = self.peek_kind() {
-                names.push(name.clone());
+            while *self.peek_kind() == TokenKind::Comma {
                 self.advance();
-                self.parse_id_more(names);
+                if let TokenKind::Ident(name) = self.peek_kind() {
+                    names.push(name.clone());
+                    self.advance();
+                } else {
+                    break;
+                }
             }
         }
+        names
     }
 
     // ===== 30. VarDec ::= ε | VarDeclaration =====
@@ -473,39 +470,22 @@ impl<'a> RdParser<'a> {
     }
 
     fn parse_var_id_list(&mut self) -> Vec<String> {
-        let mut names = Vec::new();
-        if let TokenKind::Ident(name) = self.peek_kind() {
-            names.push(name.clone());
-            self.advance();
-            self.parse_var_id_more(&mut names);
-        }
-        names
-    }
-
-    fn parse_var_id_more(&mut self, names: &mut Vec<String>) {
-        if *self.peek_kind() == TokenKind::Comma {
-            self.advance();
-            if let TokenKind::Ident(name) = self.peek_kind() {
-                names.push(name.clone());
-                self.advance();
-                self.parse_var_id_more(names);
-            }
-        }
+        self.parse_id_list()
     }
 
     /// 解析变量声明的重复部分。
     ///
     /// 通过向前看决定是继续解析下一个变量声明还是返回（ε）。
     fn parse_var_dec_more(&mut self, defs: &mut Vec<VarDef>) {
-        match self.peek_kind() {
-            TokenKind::Integer | TokenKind::Char | TokenKind::Array | TokenKind::Record => {
-                self.parse_var_dec_list(defs);
-            }
-            TokenKind::Ident(_) => {
-                // 可能是类型别名——尝试解析
-                self.parse_var_dec_list(defs);
-            }
-            _ => {} // ε
+        while matches!(
+            self.peek_kind(),
+            TokenKind::Integer
+                | TokenKind::Char
+                | TokenKind::Array
+                | TokenKind::Record
+                | TokenKind::Ident(_)
+        ) {
+            self.parse_var_dec_list(defs);
         }
     }
 
@@ -537,7 +517,10 @@ impl<'a> RdParser<'a> {
         }
         let loc = self.loc();
         self.match_token(TokenKind::Procedure);
-        let name = self.parse_proc_name();
+        let name = match self.parse_proc_name() {
+            Some(n) => n,
+            None => return,
+        };
         self.match_token(TokenKind::LParent);
         let params = self.parse_param_list();
         self.match_token(TokenKind::RParent);
@@ -554,12 +537,12 @@ impl<'a> RdParser<'a> {
         self.parse_proc_dec_more(procs);
     }
 
-    fn parse_proc_name(&mut self) -> String {
+    fn parse_proc_name(&mut self) -> Option<String> {
         match self.peek_kind() {
             TokenKind::Ident(name) => {
                 let n = name.clone();
                 self.advance();
-                n
+                Some(n)
             }
             _ => {
                 let t = self.peek().clone();
@@ -570,7 +553,7 @@ impl<'a> RdParser<'a> {
                         col: t.col,
                     },
                 ));
-                String::new()
+                None
             }
         }
     }
@@ -578,7 +561,7 @@ impl<'a> RdParser<'a> {
     // ===== 41. ProcDecMore ::= ε | ProcDeclaration =====
 
     fn parse_proc_dec_more(&mut self, procs: &mut Vec<ProcDef>) {
-        if *self.peek_kind() == TokenKind::Procedure {
+        while *self.peek_kind() == TokenKind::Procedure {
             self.parse_proc_declaration_inner(procs);
         }
     }
@@ -598,13 +581,11 @@ impl<'a> RdParser<'a> {
     // ===== 57. ProgramBody ::= BEGIN StmList END =====
 
     fn parse_program_body(&mut self) -> StmList {
+        let loc = self.loc();
         self.match_token(TokenKind::Begin);
         let stmts = self.parse_stm_list();
         self.match_token(TokenKind::End);
-        StmList {
-            stmts,
-            loc: self.loc(),
-        }
+        StmList { stmts, loc }
     }
 
     // ===== 45-54. ParamList, Param 等 =====
@@ -640,28 +621,11 @@ impl<'a> RdParser<'a> {
     }
 
     fn parse_form_list(&mut self) -> Vec<String> {
-        let mut names = Vec::new();
-        if let TokenKind::Ident(name) = self.peek_kind() {
-            names.push(name.clone());
-            self.advance();
-            self.parse_fid_more(&mut names);
-        }
-        names
-    }
-
-    fn parse_fid_more(&mut self, names: &mut Vec<String>) {
-        if *self.peek_kind() == TokenKind::Comma {
-            self.advance();
-            if let TokenKind::Ident(name) = self.peek_kind() {
-                names.push(name.clone());
-                self.advance();
-                self.parse_fid_more(names);
-            }
-        }
+        self.parse_id_list()
     }
 
     fn parse_param_more(&mut self, params: &mut Vec<ParamDef>) {
-        if *self.peek_kind() == TokenKind::Semicolon {
+        while *self.peek_kind() == TokenKind::Semicolon {
             self.advance();
             self.parse_param_dec_list(params);
         }
@@ -680,9 +644,8 @@ impl<'a> RdParser<'a> {
     // ===== 59. StmMore ::= ε | ; StmList =====
 
     fn parse_stm_more(&mut self, stmts: &mut Vec<Stm>) {
-        if *self.peek_kind() == TokenKind::Semicolon {
+        while *self.peek_kind() == TokenKind::Semicolon {
             self.advance();
-            // 分号后若紧跟结束标记则不再解析新语句
             if !matches!(
                 self.peek_kind(),
                 TokenKind::End
@@ -693,7 +656,8 @@ impl<'a> RdParser<'a> {
             ) {
                 let stm = self.parse_stm();
                 stmts.push(stm);
-                self.parse_stm_more(stmts);
+            } else {
+                break;
             }
         }
     }
@@ -831,17 +795,26 @@ impl<'a> RdParser<'a> {
         let loc = self.loc();
         self.match_token(TokenKind::Read);
         self.match_token(TokenKind::LParent);
-        let var = self.parse_invar();
+        let var = match self.parse_invar() {
+            Some(v) => v,
+            None => {
+                self.sync(&[TokenKind::RParent, TokenKind::Semicolon, TokenKind::End, TokenKind::Eof]);
+                return Stm::Read {
+                    var: String::new(),
+                    loc,
+                };
+            }
+        };
         self.match_token(TokenKind::RParent);
         Stm::Read { var, loc }
     }
 
-    fn parse_invar(&mut self) -> String {
+    fn parse_invar(&mut self) -> Option<String> {
         match self.peek_kind() {
             TokenKind::Ident(name) => {
                 let n = name.clone();
                 self.advance();
-                n
+                Some(n)
             }
             _ => {
                 let t = self.peek().clone();
@@ -852,7 +825,7 @@ impl<'a> RdParser<'a> {
                         col: t.col,
                     },
                 ));
-                String::new()
+                None
             }
         }
     }
@@ -901,10 +874,9 @@ impl<'a> RdParser<'a> {
     }
 
     fn parse_act_param_more(&mut self, args: &mut Vec<Exp>) {
-        if *self.peek_kind() == TokenKind::Comma {
+        while *self.peek_kind() == TokenKind::Comma {
             self.advance();
             args.push(self.parse_exp());
-            self.parse_act_param_more(args);
         }
     }
 
@@ -1023,8 +995,10 @@ impl<'a> RdParser<'a> {
                 Exp::CharConst(val, loc)
             }
             TokenKind::Ident(_) => {
-                let va = self.parse_variable();
-                Exp::Variable(va, loc)
+                match self.parse_variable() {
+                    Some(va) => Exp::Variable(va, loc),
+                    None => Exp::IntConst(0, loc),
+                }
             }
             _ => {
                 let t = self.peek().clone();
@@ -1042,7 +1016,7 @@ impl<'a> RdParser<'a> {
 
     // ===== 92. Variable ::= ID VariMore =====
 
-    fn parse_variable(&mut self) -> VarAccess {
+    fn parse_variable(&mut self) -> Option<VarAccess> {
         let loc = self.loc();
         let base = match self.peek_kind() {
             TokenKind::Ident(name) => {
@@ -1059,15 +1033,15 @@ impl<'a> RdParser<'a> {
                         col: t.col,
                     },
                 ));
-                String::new()
+                return None;
             }
         };
         let selector = self.parse_vari_more();
-        VarAccess {
+        Some(VarAccess {
             base,
             selector,
             loc,
-        }
+        })
     }
 
     // ===== 93. VariMore ::= ε | [ Exp ] | . FieldVar =====

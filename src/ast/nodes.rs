@@ -8,6 +8,8 @@
 //!
 //! 所有节点携带 `Loc` 信息用于错误定位。
 
+use std::fmt;
+
 /// 源码位置。
 ///
 /// 行号和列号均从 1 开始计数。
@@ -17,10 +19,16 @@ pub struct Loc {
     pub col: usize,
 }
 
+impl fmt::Display for Loc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.line, self.col)
+    }
+}
+
 // ===== 顶层结构 =====
 
 /// 完整程序。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Program {
     /// 程序名称（program 关键字后的标识符）
     pub name: String,
@@ -33,7 +41,7 @@ pub struct Program {
 }
 
 /// 声明部分，包含类型、变量和过程的声明。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DeclarePart {
     pub types: TypeDec,
     pub vars: VarDec,
@@ -43,14 +51,14 @@ pub struct DeclarePart {
 // ===== 类型声明 =====
 
 /// 类型声明：可为空或包含一组类型定义。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum TypeDec {
     Empty,
     Defined(Vec<TypeDef>),
 }
 
 /// 单个类型定义。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TypeDef {
     pub name: String,
     pub body: TypeBody,
@@ -112,14 +120,14 @@ pub enum FieldTypeDef {
 // ===== 变量声明 =====
 
 /// 变量声明。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum VarDec {
     Empty,
     Defined(Vec<VarDef>),
 }
 
 /// 单个变量定义。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VarDef {
     pub type_name: TypeDesig,
     pub names: Vec<String>,
@@ -127,7 +135,7 @@ pub struct VarDef {
 }
 
 /// 变量类型描述符。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum TypeDesig {
     Base(BaseType),
     Array(ArrayTypeDef),
@@ -138,14 +146,14 @@ pub enum TypeDesig {
 // ===== 过程声明 =====
 
 /// 过程声明。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ProcDec {
     Empty,
     Defined(Vec<ProcDef>),
 }
 
 /// 单个过程定义。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ProcDef {
     /// 过程名称
     pub name: String,
@@ -159,7 +167,7 @@ pub struct ProcDef {
 }
 
 /// 形参定义。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ParamDef {
     /// 是否为 var 参数（引用传递）
     pub is_var: bool,
@@ -173,14 +181,14 @@ pub struct ParamDef {
 // ===== 语句 =====
 
 /// 语句列表（一个复合语句）。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct StmList {
     pub stmts: Vec<Stm>,
     pub loc: Loc,
 }
 
 /// 语句。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Stm {
     /// 赋值语句
     Assign {
@@ -227,7 +235,7 @@ pub enum Stm {
 // ===== 表达式 =====
 
 /// 表达式。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Exp {
     /// 二元运算
     Binary {
@@ -263,7 +271,7 @@ pub enum BinOp {
 ///
 /// 由基础变量名和一系列选择器组成，
 /// 选择器可以嵌套组合（如 `a[1].b[2]`）。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VarAccess {
     /// 基础变量名称
     pub base: String,
@@ -273,7 +281,7 @@ pub struct VarAccess {
 }
 
 /// 变量选择器。
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Selector {
     /// 数组下标访问（`[exp]`）
     ArraySubscript(Box<Exp>),

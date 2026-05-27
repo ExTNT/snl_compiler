@@ -76,7 +76,7 @@ impl SemanticAnalyzer {
 
     fn collect_declarations(&mut self, prog: &Program) {
         // 程序名本身作为过程标识符（入口点）
-        let _ = self.symbols.insert(SymbolEntry {
+        self.insert_symbol(SymbolEntry {
             name: prog.name.clone(),
             kind: IdKind::ProcId,
             typ: None,
@@ -94,7 +94,7 @@ impl SemanticAnalyzer {
         if let TypeDec::Defined(defs) = type_dec {
             for def in defs {
                 let ti = self.type_body_to_info(&def.body);
-                let _ = self.symbols.insert(SymbolEntry {
+                self.insert_symbol(SymbolEntry {
                     name: def.name.clone(),
                     kind: IdKind::TypeId,
                     typ: Some(ti),
@@ -111,7 +111,7 @@ impl SemanticAnalyzer {
             for def in defs {
                 let ti = self.type_desig_to_info(&def.type_name);
                 for name in &def.names {
-                    let _ = self.symbols.insert(SymbolEntry {
+                    self.insert_symbol(SymbolEntry {
                         name: name.clone(),
                         kind: IdKind::VarId,
                         typ: Some(ti.clone()),
@@ -140,7 +140,7 @@ impl SemanticAnalyzer {
                     })
                     .collect();
 
-                let _ = self.symbols.insert(SymbolEntry {
+                self.insert_symbol(SymbolEntry {
                     name: proc.name.clone(),
                     kind: IdKind::ProcId,
                     typ: None,
@@ -156,7 +156,7 @@ impl SemanticAnalyzer {
                 for p in &proc.params {
                     let ti = self.type_desig_to_info(&p.type_name);
                     for name in &p.names {
-                        let _ = self.symbols.insert(SymbolEntry {
+                        self.insert_symbol(SymbolEntry {
                             name: name.clone(),
                             kind: IdKind::VarId,
                             typ: Some(ti.clone()),
@@ -273,12 +273,16 @@ impl SemanticAnalyzer {
 
         // LHS 和 RHS 类型不兼容时报告错误
         match (&lhs_ty, &rhs_ty) {
-            (Some(l), Some(r)) if !types_compatible(l, r) => {
-                self.error(
-                    SemanticErrCode::AssignTypeMismatch,
-                    "Assignment type mismatch",
-                    loc,
-                );
+            (Some(l), Some(r)) => {
+                let rl = self.resolve_type(l);
+                let rr = self.resolve_type(r);
+                if !types_compatible(&rl, &rr) {
+                    self.error(
+                        SemanticErrCode::AssignTypeMismatch,
+                        "Assignment type mismatch",
+                        loc,
+                    );
+                }
             }
             _ => {}
         }
@@ -325,16 +329,20 @@ impl SemanticAnalyzer {
                     let arg_ty = self.check_exp(arg);
                     if let Some(param) = params.get(i) {
                         match &arg_ty {
-                            Some(t) if !types_compatible(t, &param.typ) => {
-                                self.error(
-                                    SemanticErrCode::ParamTypeMismatch,
-                                    format!(
-                                        "Argument {} type mismatch in call to '{}'",
-                                        i + 1,
-                                        name
-                                    ),
-                                    loc,
-                                );
+                            Some(t) => {
+                                let rt = self.resolve_type(t);
+                                let rp = self.resolve_type(&param.typ);
+                                if !types_compatible(&rt, &rp) {
+                                    self.error(
+                                        SemanticErrCode::ParamTypeMismatch,
+                                        format!(
+                                            "Argument {} type mismatch in call to '{}'",
+                                            i + 1,
+                                            name
+                                        ),
+                                        loc,
+                                    );
+                                }
                             }
                             _ => {}
                         }
@@ -358,12 +366,16 @@ impl SemanticAnalyzer {
                 let lt = self.check_exp(left);
                 let rt = self.check_exp(right);
                 match (&lt, &rt) {
-                    (Some(l), Some(r)) if !types_compatible(l, r) => {
-                        self.error(
-                            SemanticErrCode::OperatorTypeMismatch,
-                            "Operator operand type mismatch",
-                            *loc,
-                        );
+                    (Some(l), Some(r)) => {
+                        let rl = self.resolve_type(l);
+                        let rr = self.resolve_type(r);
+                        if !types_compatible(&rl, &rr) {
+                            self.error(
+                                SemanticErrCode::OperatorTypeMismatch,
+                                "Operator operand type mismatch",
+                                *loc,
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -428,7 +440,6 @@ impl SemanticAnalyzer {
                         match fields.iter().find(|f| f.name == *name) {
                             Some(f) => {
                                 if let Selector::FieldSubscript(_, exp) = sel {
-                                    // 字段包含下标——字段类型必须为数组
                                     match &f.typ {
                                         TypeInfo::Array(elem_ty, low, high) => {
                                             if let Exp::IntConst(n, loc) = exp.as_ref() {
@@ -468,6 +479,14 @@ impl SemanticAnalyzer {
                     _ => None,
                 }
             }
+            TypeInfo::Named(_) => {
+                let resolved = self.resolve_type(ty);
+                if matches!(&resolved, TypeInfo::Named(_)) {
+                    None
+                } else {
+                    self.resolve_selector(&resolved, sel)
+                }
+            }
             _ => None,
         }
     }
@@ -489,12 +508,12 @@ impl SemanticAnalyzer {
                 let fields: Vec<FieldInfo> = rec
                     .fields
                     .iter()
-                    .map(|f| {
+                    .flat_map(|f| {
                         let ft = self.field_type_to_info(&f.typ);
-                        FieldInfo {
-                            name: f.names.first().cloned().unwrap_or_default(),
-                            typ: ft,
-                        }
+                        f.names.iter().map(move |n| FieldInfo {
+                            name: n.clone(),
+                            typ: ft.clone(),
+                        })
                     })
                     .collect();
                 TypeInfo::Record(fields)
@@ -518,12 +537,12 @@ impl SemanticAnalyzer {
                 let fields: Vec<FieldInfo> = rec
                     .fields
                     .iter()
-                    .map(|f| {
+                    .flat_map(|f| {
                         let ft = self.field_type_to_info(&f.typ);
-                        FieldInfo {
-                            name: f.names.first().cloned().unwrap_or_default(),
-                            typ: ft,
-                        }
+                        f.names.iter().map(move |n| FieldInfo {
+                            name: n.clone(),
+                            typ: ft.clone(),
+                        })
                     })
                     .collect();
                 TypeInfo::Record(fields)
@@ -548,6 +567,43 @@ impl SemanticAnalyzer {
 
     fn error(&mut self, code: SemanticErrCode, msg: impl Into<String>, loc: Loc) {
         self.errors.push(CompileError::semantic(code, msg, loc));
+    }
+
+    /// 向符号表插入条目，若重复定义则报告 DuplicateId 错误。
+    fn insert_symbol(&mut self, entry: SymbolEntry) {
+        let name = entry.name.clone();
+        let loc = entry.loc;
+        if self.symbols.insert(entry).is_err() {
+            self.error(
+                SemanticErrCode::DuplicateId,
+                format!("Duplicate definition of '{}'", name),
+                loc,
+            );
+        }
+    }
+
+    /// 解析 Named 类型别名，在符号表中查找并递归展开。
+    fn resolve_type(&self, ty: &TypeInfo) -> TypeInfo {
+        match ty {
+            TypeInfo::Named(name) => {
+                match self.symbols.lookup(name) {
+                    Some(entry) if entry.kind == IdKind::TypeId => {
+                        if let Some(inner) = &entry.typ {
+                            if matches!(inner, TypeInfo::Named(_)) {
+                                return self.resolve_type(inner);
+                            }
+                            return inner.clone();
+                        }
+                    }
+                    _ => {}
+                }
+                ty.clone()
+            }
+            TypeInfo::Array(elem, low, high) => {
+                TypeInfo::Array(Box::new(self.resolve_type(elem)), *low, *high)
+            }
+            _ => ty.clone(),
+        }
     }
 }
 

@@ -2,6 +2,8 @@
 //!
 //! 提供统一的错误表示，覆盖词法、语法、语义三个阶段的错误。
 
+use std::fmt::{self, Display};
+
 use crate::ast::nodes::Loc;
 
 /// 语义错误码，标识具体的语义违规类型。
@@ -42,6 +44,8 @@ pub enum ErrorKind {
     Syntax,
     /// 语义错误，携带具体错误码
     Semantic(SemanticErrCode),
+    /// 代码生成错误
+    Codegen,
 }
 
 /// 编译错误。
@@ -84,4 +88,30 @@ impl CompileError {
             loc,
         }
     }
+
+    /// 创建代码生成错误。
+    pub fn codegen(msg: impl Into<String>) -> Self {
+        CompileError {
+            kind: ErrorKind::Codegen,
+            msg: msg.into(),
+            loc: Loc { line: 0, col: 0 },
+        }
+    }
 }
+
+impl Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            ErrorKind::Lexical => write!(f, "{}:{} — {}", self.loc.line, self.loc.col, self.msg),
+            ErrorKind::Syntax => write!(f, "{}:{} — {}", self.loc.line, self.loc.col, self.msg),
+            ErrorKind::Semantic(code) => write!(
+                f,
+                "{}:{} [{:?}] — {}",
+                self.loc.line, self.loc.col, code, self.msg
+            ),
+            ErrorKind::Codegen => write!(f, "[codegen] {}", self.msg),
+        }
+    }
+}
+
+impl std::error::Error for CompileError {}

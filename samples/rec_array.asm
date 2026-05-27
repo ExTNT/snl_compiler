@@ -41,8 +41,7 @@ loop_0:
   lw $v0, 0($t8)         # load global i
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
-  mul $t7, $v0, $t0
-  move $v0, $t7
+  mul $v0, $v0, $t0
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # save rhs value
   la $t0, var_r

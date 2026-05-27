@@ -20,6 +20,7 @@
 use std::collections::HashMap;
 
 use crate::ast::nodes::*;
+use crate::error::CompileError;
 
 // ===== 代码生成类型表示 =====
 
@@ -57,23 +58,25 @@ impl CodegenType {
             CodegenType::Integer => 4,
             CodegenType::Char => 1,
             CodegenType::Array(elem, _, _) => elem.element_byte_size(),
-            CodegenType::Record(_) => panic!("Record has no element byte size"),
+            CodegenType::Record(_) => {
+                // Record types should never reach this; fallback
+                0
+            }
         }
     }
 
-    /// 预计算记录各字段的 (偏移量, 类型)。
-    ///
-    /// 字段按声明顺序依次分配，偏移量从 0 开始累积。
-    fn field_offsets(&self) -> HashMap<String, (i32, CodegenType)> {
-        let mut offsets = HashMap::new();
+    /// 查找记录字段的偏移量和类型。
+    fn field_offset(&self, name: &str) -> Option<(i32, CodegenType)> {
         if let CodegenType::Record(fields) = self {
             let mut offset = 0i32;
-            for (name, ft) in fields {
-                offsets.insert(name.clone(), (offset, ft.clone()));
+            for (fname, ft) in fields {
+                if fname == name {
+                    return Some((offset, ft.clone()));
+                }
                 offset += ft.size_of();
             }
         }
-        offsets
+        None
     }
 }
 
@@ -99,6 +102,7 @@ fn type_body_to_codegen(
     body: &TypeBody,
     aliases: &HashMap<String, TypeBody>,
     visited: &mut Vec<String>,
+    errors: &mut Vec<CompileError>,
 ) -> CodegenType {
     match body {
         TypeBody::Base(BaseType::Integer) => CodegenType::Integer,
@@ -123,20 +127,26 @@ fn type_body_to_codegen(
         }
         TypeBody::Named(name) => {
             if visited.contains(name) {
-                panic!("Circular type alias: {}", name);
+                errors.push(CompileError::codegen(format!("Circular type alias: {}", name)));
+                return CodegenType::Integer;
             }
             visited.push(name.clone());
-            let resolved = aliases
-                .get(name)
-                .unwrap_or_else(|| panic!("Undefined type alias: {}", name));
-            let result = type_body_to_codegen(resolved, aliases, visited);
+            let resolved = match aliases.get(name) {
+                Some(body) => body,
+                None => {
+                    errors.push(CompileError::codegen(format!("Undefined type alias: {}", name)));
+                    visited.pop();
+                    return CodegenType::Integer;
+                }
+            };
+            let result = type_body_to_codegen(resolved, aliases, visited, errors);
             visited.pop();
             result
         }
     }
 }
 
-fn type_desig_to_codegen(td: &TypeDesig, aliases: &HashMap<String, TypeBody>) -> CodegenType {
+fn type_desig_to_codegen(td: &TypeDesig, aliases: &HashMap<String, TypeBody>, errors: &mut Vec<CompileError>) -> CodegenType {
     match td {
         TypeDesig::Base(BaseType::Integer) => CodegenType::Integer,
         TypeDesig::Base(BaseType::Char) => CodegenType::Char,
@@ -160,10 +170,14 @@ fn type_desig_to_codegen(td: &TypeDesig, aliases: &HashMap<String, TypeBody>) ->
         }
         TypeDesig::Named(name) => {
             let mut visited = vec![name.clone()];
-            let body = aliases
-                .get(name)
-                .unwrap_or_else(|| panic!("Undefined type alias: {}", name));
-            type_body_to_codegen(body, aliases, &mut visited)
+            let body = match aliases.get(name) {
+                Some(body) => body,
+                None => {
+                    errors.push(CompileError::codegen(format!("Undefined type alias: {}", name)));
+                    return CodegenType::Integer;
+                }
+            };
+            type_body_to_codegen(body, aliases, &mut visited, errors)
         }
     }
 }
@@ -192,14 +206,11 @@ pub struct MipsContext {
     pub code: String,
     pub data: String,
     label_counter: usize,
-    /// 变量名 → (栈偏移, 嵌套层级) 映射栈
     var_offsets: Vec<HashMap<String, (i32, usize)>>,
-    /// 变量名 → 代码生成类型映射栈
     var_types: Vec<HashMap<String, CodegenType>>,
-    /// 各作用域的栈帧大小（累积）
     frame_sizes: Vec<i32>,
-    /// 当前嵌套层级（0 = 全局/main）
     nesting_level: usize,
+    errors: Vec<CompileError>,
 }
 
 impl MipsContext {
@@ -210,10 +221,14 @@ impl MipsContext {
             label_counter: 0,
             var_offsets: vec![HashMap::new()],
             var_types: vec![HashMap::new()],
-            // 全局帧预留 4 字节用于 $ra 保存
             frame_sizes: vec![4],
             nesting_level: 0,
+            errors: Vec::new(),
         }
+    }
+
+    fn error(&mut self, msg: impl Into<String>) {
+        self.errors.push(CompileError::codegen(msg));
     }
 
     /// 生成唯一标签（如 `else_0`、`endif_1`）。
@@ -224,11 +239,11 @@ impl MipsContext {
     }
 
     fn current_scope(&self) -> &HashMap<String, (i32, usize)> {
-        self.var_offsets.last().unwrap()
+        self.var_offsets.last().expect("var_offsets should never be empty")
     }
 
     fn current_scope_mut(&mut self) -> &mut HashMap<String, (i32, usize)> {
-        self.var_offsets.last_mut().unwrap()
+        self.var_offsets.last_mut().expect("var_offsets should never be empty")
     }
 
     /// 在当前作用域中为变量分配栈空间。
@@ -236,15 +251,15 @@ impl MipsContext {
     /// 若变量已在当前作用域声明则跳过。
     pub fn alloc_var(&mut self, name: &str, typ: &CodegenType) {
         if !self.current_scope().contains_key(name) {
-            let offset = *self.frame_sizes.last().unwrap();
+            let offset = *self.frame_sizes.last().expect("frame_sizes should never be empty");
             let level = self.nesting_level;
             self.current_scope_mut()
                 .insert(name.to_string(), (offset, level));
             self.var_types
                 .last_mut()
-                .unwrap()
+                .expect("var_types should never be empty")
                 .insert(name.to_string(), typ.clone());
-            *self.frame_sizes.last_mut().unwrap() += typ.size_of();
+            *self.frame_sizes.last_mut().expect("frame_sizes should never be empty") += typ.size_of();
         }
     }
 
@@ -261,10 +276,10 @@ impl MipsContext {
     }
 
     /// 查找变量的代码生成类型。
-    pub fn get_var_type(&self, name: &str) -> Option<CodegenType> {
+    pub fn get_var_type(&self, name: &str) -> Option<&CodegenType> {
         for scope in self.var_types.iter().rev() {
             if let Some(typ) = scope.get(name) {
-                return Some(typ.clone());
+                return Some(typ);
             }
         }
         None
@@ -292,7 +307,7 @@ impl MipsContext {
     }
 
     pub fn frame_size(&self) -> i32 {
-        *self.frame_sizes.last().unwrap()
+        *self.frame_sizes.last().expect("frame_sizes should never be empty")
     }
 
     /// 向代码段追加一条指令。
@@ -313,66 +328,35 @@ impl MipsContext {
     }
 }
 
-/// 计算帧指针相对偏移的字符串表示。
-///
-/// 正偏移 → `-$fp`，负偏移 → `+($fp)`。
-fn fp_offset(offset: i32) -> String {
-    if offset >= 0 {
-        format!("-{}($fp)", offset)
-    } else {
-        format!("{}($fp)", -offset)
-    }
-}
-
 /// 生成加载变量值到 `$v0` 的 MIPS 代码。
-///
-/// 全局变量（level 0）使用标签寻址，局部变量使用 `$fp` 偏移。
-/// 字符类型使用 `lb`，其他类型使用 `lw`。
 fn emit_load(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, typ: &CodegenType) {
-    let instr = if *typ == CodegenType::Char {
-        "lb"
-    } else {
-        "lw"
-    };
+    let instr = if matches!(typ, CodegenType::Char) { "lb" } else { "lw" };
     if var_level == 0 {
         ctx.emit(&format!("  la $t8, var_{}", name));
-        ctx.emit(&format!(
-            "  {} $v0, 0($t8)         # load global {}",
-            instr, name
-        ));
+        ctx.emit(&format!("  {} $v0, 0($t8)         # load global {}", instr, name));
     } else {
-        ctx.emit(&format!(
-            "  {} $v0, {}       # load {}",
-            instr,
-            fp_offset(offset),
-            name
-        ));
+        let off_str = if offset >= 0 {
+            format!("-{}", offset)
+        } else {
+            format!("{}", -offset)
+        };
+        ctx.emit(&format!("  {} $v0, {}({})       # load {}", instr, off_str, "$fp", name));
     }
 }
 
 /// 生成将 `$v0` 存回变量的 MIPS 代码。
-///
-/// 全局变量使用标签寻址，局部变量使用 `$fp` 偏移。
-/// 字符类型使用 `sb`，其他类型使用 `sw`。
 fn emit_store(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, typ: &CodegenType) {
-    let instr = if *typ == CodegenType::Char {
-        "sb"
-    } else {
-        "sw"
-    };
+    let instr = if matches!(typ, CodegenType::Char) { "sb" } else { "sw" };
     if var_level == 0 {
         ctx.emit(&format!("  la $t8, var_{}", name));
-        ctx.emit(&format!(
-            "  {} $v0, 0($t8)         # store to global {}",
-            instr, name
-        ));
+        ctx.emit(&format!("  {} $v0, 0($t8)         # store to global {}", instr, name));
     } else {
-        ctx.emit(&format!(
-            "  {} $v0, {}       # store to {}",
-            instr,
-            fp_offset(offset),
-            name
-        ));
+        let off_str = if offset >= 0 {
+            format!("-{}", offset)
+        } else {
+            format!("{}", -offset)
+        };
+        ctx.emit(&format!("  {} $v0, {}({})       # store to {}", instr, off_str, "$fp", name));
     }
 }
 
@@ -380,13 +364,9 @@ fn emit_store(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, 
 
 /// 将程序编译为 MIPS 汇编代码字符串。
 ///
-/// 返回完整的 `.data` + `.text` 段汇编代码。
-///
-/// # 示例
-/// ```
-/// // compile(&prog) → ".data\n...\n.text\n.globl main\nmain:\n..."
-/// ```
-pub fn compile(prog: &Program) -> String {
+/// 返回完整的 `.data` + `.text` 段汇编代码，若代码生成过程中
+/// 遇到错误则返回错误列表。
+pub fn compile(prog: &Program) -> Result<String, Vec<CompileError>> {
     let mut ctx = MipsContext::new();
 
     // 构建全局类型别名映射
@@ -395,7 +375,7 @@ pub fn compile(prog: &Program) -> String {
     // 数据段：分配全局变量
     ctx.emit_data("newline: .asciiz \"\\n\"");
     for var_dec in var_decs(&prog.decl.vars) {
-        let resolved = type_desig_to_codegen(&var_dec.type_name, &global_aliases);
+        let resolved = type_desig_to_codegen(&var_dec.type_name, &global_aliases, &mut ctx.errors);
         let size = resolved.size_of();
         for name in &var_dec.names {
             if size == 4 {
@@ -408,7 +388,7 @@ pub fn compile(prog: &Program) -> String {
             ctx.current_scope_mut().insert(name.to_string(), (0, 0));
             ctx.var_types
                 .last_mut()
-                .unwrap()
+                .expect("var_types should never be empty")
                 .insert(name.to_string(), resolved.clone());
         }
     }
@@ -438,7 +418,14 @@ pub fn compile(prog: &Program) -> String {
     // 编译过程声明
     compile_procs(&prog.decl.procs, &mut ctx, &global_aliases);
 
-    format!(".data\n{}\n.text\n.globl main\n{}", ctx.data, ctx.code)
+    if ctx.errors.is_empty() {
+        Ok(format!(
+            ".data\n{}\n.text\n.globl main\n{}",
+            ctx.data, ctx.code
+        ))
+    } else {
+        Err(ctx.errors)
+    }
 }
 
 /// 递归编译过程声明。
@@ -473,7 +460,7 @@ fn compile_procs(
             // 分配形参（在调用者的帧中，位于 $fp 之上）
             let proc_level = ctx.nesting_level();
             for (i, param) in proc.params.iter().enumerate() {
-                let param_type = type_desig_to_codegen(&param.type_name, &proc_aliases);
+                let param_type = type_desig_to_codegen(&param.type_name, &proc_aliases, &mut ctx.errors);
                 for name in &param.names {
                     // 形参位于前 8 字节（$fp + $ra）之上
                     let offset = -(i as i32 * 4 + 8);
@@ -481,14 +468,14 @@ fn compile_procs(
                         .insert(name.clone(), (offset, proc_level));
                     ctx.var_types
                         .last_mut()
-                        .unwrap()
+                        .expect("var_types should never be empty")
                         .insert(name.clone(), param_type.clone());
                 }
             }
 
             // 局部变量声明
             for var_dec in var_decs(&proc.decl.vars) {
-                let resolved = type_desig_to_codegen(&var_dec.type_name, &proc_aliases);
+                let resolved = type_desig_to_codegen(&var_dec.type_name, &proc_aliases, &mut ctx.errors);
                 for name in &var_dec.names {
                     ctx.alloc_var(name, &resolved);
                 }
@@ -531,10 +518,17 @@ fn compile_procs(
 fn emit_var_address(va: &VarAccess, ctx: &mut MipsContext) -> CodegenType {
     let (offset, var_level) = ctx
         .get_var_offset(&va.base)
-        .unwrap_or_else(|| panic!("Unknown variable '{}'", va.base));
+        .unwrap_or_else(|| {
+            ctx.error(format!("Unknown variable '{}'", va.base));
+            (0, 0)
+        });
     let current_typ = ctx
         .get_var_type(&va.base)
-        .unwrap_or_else(|| panic!("No type for '{}'", va.base));
+        .cloned()
+        .unwrap_or_else(|| {
+            ctx.error(format!("No type for '{}'", va.base));
+            CodegenType::Integer
+        });
 
     // 将基础地址加载到 $t0
     if var_level == 0 {
@@ -559,7 +553,10 @@ fn walk_selectors(
             Selector::ArraySubscript(exp) => {
                 let (elem_type, low_val) = match &current_typ {
                     CodegenType::Array(elem, low, _) => (*elem.clone(), *low),
-                    _ => panic!("Array subscript on non-array type"),
+                    _ => {
+                        ctx.error("Array subscript on non-array type");
+                        return CodegenType::Integer;
+                    }
                 };
                 ctx.emit("  addiu $sp, $sp, -4");
                 ctx.emit("  sw $t0, 0($sp)          # save base address");
@@ -578,24 +575,29 @@ fn walk_selectors(
                 current_typ = elem_type;
             }
             Selector::Field(name) => {
-                let offsets = current_typ.field_offsets();
-                let (field_offset, field_type) = offsets
-                    .get(name)
-                    .unwrap_or_else(|| panic!("Field '{}' not found in record", name))
-                    .clone();
+                let (field_offset, field_type) = current_typ
+                    .field_offset(name)
+                    .unwrap_or_else(|| {
+                        ctx.error(format!("Field '{}' not found in record", name));
+                        (0, CodegenType::Integer)
+                    });
                 ctx.emit(&format!("  addiu $t0, $t0, {}", field_offset));
                 current_typ = field_type;
             }
             Selector::FieldSubscript(name, exp) => {
-                let offsets = current_typ.field_offsets();
-                let (field_offset, field_type) = offsets
-                    .get(name)
-                    .unwrap_or_else(|| panic!("Field '{}' not found in record", name))
-                    .clone();
+                let (field_offset, field_type) = current_typ
+                    .field_offset(name)
+                    .unwrap_or_else(|| {
+                        ctx.error(format!("Field '{}' not found in record", name));
+                        (0, CodegenType::Integer)
+                    });
                 ctx.emit(&format!("  addiu $t0, $t0, {}", field_offset));
                 let (elem_type, low_val) = match &field_type {
                     CodegenType::Array(elem, low, _) => (*elem.clone(), *low),
-                    _ => panic!("FieldSubscript on non-array field"),
+                    _ => {
+                        ctx.error("FieldSubscript on non-array field");
+                        return CodegenType::Integer;
+                    }
                 };
                 ctx.emit("  addiu $sp, $sp, -4");
                 ctx.emit("  sw $t0, 0($sp)          # save base address");
@@ -634,9 +636,11 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
             // 无选择器的简单赋值
             if lhs.selector.is_empty() {
                 if let Some((offset, var_level)) = ctx.get_var_offset(&lhs.base) {
-                    if let Some(typ) = ctx.get_var_type(&lhs.base) {
-                        emit_store(ctx, offset, var_level, &lhs.base, &typ);
-                    }
+                    let is_char = ctx
+                        .get_var_type(&lhs.base)
+                        .map_or(false, |t| matches!(t, CodegenType::Char));
+                    let store_typ = if is_char { &CodegenType::Char } else { &CodegenType::Integer };
+                    emit_store(ctx, offset, var_level, &lhs.base, store_typ);
                 }
             } else {
                 // 带选择器（数组下标/记录字段）的赋值：
@@ -682,15 +686,18 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
             ctx.emit_label(&end_label);
         }
         Stm::Read { var, .. } => {
-            let typ = ctx.get_var_type(var).unwrap_or(CodegenType::Integer);
-            if typ == CodegenType::Char {
+            let is_char = ctx
+                .get_var_type(var)
+                .map_or(false, |t| matches!(t, CodegenType::Char));
+            if is_char {
                 ctx.emit("  li $v0, 12             # read char syscall");
             } else {
                 ctx.emit("  li $v0, 5              # read int syscall");
             }
             ctx.emit("  syscall");
             if let Some((offset, var_level)) = ctx.get_var_offset(var) {
-                emit_store(ctx, offset, var_level, var, &typ);
+                let store_typ = if is_char { &CodegenType::Char } else { &CodegenType::Integer };
+                emit_store(ctx, offset, var_level, var, store_typ);
             }
         }
         Stm::Write { exp, .. } => {
@@ -745,7 +752,7 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
                 BinOp::Add => ctx.emit("  addu $v0, $v0, $t0"),
                 BinOp::Sub => ctx.emit("  subu $v0, $v0, $t0"),
                 // mul 结果在 $t7 中，需再 move 到 $v0
-                BinOp::Mul => ctx.emit("  mul $t7, $v0, $t0\n  move $v0, $t7"),
+                BinOp::Mul => ctx.emit("  mul $v0, $v0, $t0"),
                 BinOp::Div => {
                     ctx.emit("  div $v0, $v0, $t0");
                     ctx.emit("  mflo $v0");
@@ -776,10 +783,16 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
         Exp::Variable(va, _) => {
             if va.selector.is_empty() {
                 if let Some((offset, var_level)) = ctx.get_var_offset(&va.base) {
-                    if let Some(typ) = ctx.get_var_type(&va.base) {
-                        emit_load(ctx, offset, var_level, &va.base, &typ);
-                        return typ;
-                    }
+                    let is_char = ctx
+                        .get_var_type(&va.base)
+                        .map_or(false, |t| matches!(t, CodegenType::Char));
+                    let load_typ = if is_char { &CodegenType::Char } else { &CodegenType::Integer };
+                    emit_load(ctx, offset, var_level, &va.base, load_typ);
+                    return if is_char {
+                        CodegenType::Char
+                    } else {
+                        CodegenType::Integer
+                    };
                 }
                 CodegenType::Integer
             } else {
@@ -815,7 +828,7 @@ mod tests {
         let (tokens, _) = lexer.tokenize(source);
         let mut parser = RdParser::new(tokens);
         let prog = parser.parse().expect("Parse should succeed");
-        compile(&prog)
+        compile(&prog).expect("Codegen should succeed")
     }
 
     #[test]

@@ -19,15 +19,15 @@ use super::parse_table::{self, Ll1Table, normalize};
 /// LL(1) 表驱动分析器。
 ///
 /// 在构造时即验证文法为 LL(1)，之后可多次调用 `parse()` 分析不同源码。
-pub struct Ll1Parser {
+pub struct Ll1Parser<'a> {
     grammar: Grammar,
     table: Ll1Table,
-    tokens: Vec<Token>,
+    tokens: &'a [Token],
     pos: usize,
     errors: Vec<CompileError>,
 }
 
-impl Ll1Parser {
+impl<'a> Ll1Parser<'a> {
     /// 创建 LL(1) 分析器。
     ///
     /// 若文法存在 LL(1) 冲突，返回错误。
@@ -37,7 +37,7 @@ impl Ll1Parser {
         Ok(Ll1Parser {
             grammar,
             table,
-            tokens: Vec::new(),
+            tokens: &[],
             pos: 0,
             errors: Vec::new(),
         })
@@ -50,11 +50,8 @@ impl Ll1Parser {
     /// LL(1) 表驱动分析。
     ///
     /// 返回 true 表示分析成功（无语法错误），false 表示存在语法错误。
-    ///
-    /// 注意：该分析器只做语法验证，不构建 AST。
-    /// 完整的 AST 构建由递归下降分析器完成。
-    pub fn parse(&mut self, tokens: &[Token]) -> bool {
-        self.tokens = tokens.to_vec();
+    pub fn parse(&mut self, tokens: &'a [Token]) -> bool {
+        self.tokens = tokens;
         self.pos = 0;
         self.errors.clear();
 
@@ -76,7 +73,9 @@ impl Ll1Parser {
                                 col: current.col,
                             },
                         ));
-                        self.pos += 1;
+                        if self.pos + 1 < self.tokens.len() {
+                            self.pos += 1;
+                        }
                     }
                 }
                 StackItem::N(nt) => {
@@ -99,7 +98,9 @@ impl Ll1Parser {
                                 col: current.col,
                             },
                         ));
-                        self.pos += 1;
+                        if self.pos + 1 < self.tokens.len() {
+                            self.pos += 1;
+                        }
                     }
                 }
             }

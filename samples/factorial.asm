@@ -68,8 +68,7 @@ else_0:
   lw $v0, 8($fp)       # load m
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
-  mul $t7, $v0, $t0
-  move $v0, $t7
+  mul $v0, $v0, $t0
   la $t8, var_result
   sw $v0, 0($t8)         # store to global result
 endif_1:

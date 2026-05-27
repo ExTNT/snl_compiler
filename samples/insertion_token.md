@@ -1,8 +1,8 @@
-# `samples/insertion.snl` 单词序列
+# `samples/insertion.snl` Token 序列
 
-## 单词列表
+## Token 列表
 
-| 序号 | 单词类型 | 值 | 行:列 |
+| 序号 | Token 类型 | 值 | 行:列 |
 |------|----------|----|-------|
 | 1 | Program |  | 1:1 |
 | 2 | Ident("insertion") | insertion | 1:9 |

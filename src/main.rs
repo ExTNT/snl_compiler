@@ -2,7 +2,7 @@
 //!
 //! 四阶段编译管线：
 //! 1. 词法分析 → 生成 `*_token.md`
-//! 2. 语法分析 → 生成 `*_tree.md`
+//! 2. 语法分析 → 递归下降构建 AST + LL(1) 验证，生成 `*_tree.md`
 //! 3. 语义分析 → 生成 `*_table.md`
 //! 4. 代码生成 → 输出 MIPS 汇编 `.asm`
 //!
@@ -16,6 +16,7 @@ use std::process;
 
 use snl_compiler::codegen::mips;
 use snl_compiler::lexer::Lexer;
+use snl_compiler::parser::ll1::Ll1Parser;
 use snl_compiler::parser::rd::RdParser;
 use snl_compiler::semantic::analyzer::SemanticAnalyzer;
 use snl_compiler::semantic::symbol::SymbolEntry;
@@ -91,6 +92,29 @@ fn main() {
         }
     }
 
+    // ===== 阶段 2.5: LL(1) 文法验证 =====
+    match Ll1Parser::new() {
+        Ok(mut ll1) => {
+            if !ll1.parse(tokens) {
+                eprintln!("=== LL(1) Verification Errors ===");
+                for err in ll1.errors() {
+                    eprintln!("  Line {}:{} — {}", err.loc.line, err.loc.col, err.msg);
+                }
+                eprintln!("Warning: LL(1) verification failed (RD parse succeeded)");
+            }
+        }
+        Err(conflicts) => {
+            eprintln!("=== LL(1) Grammar Conflicts ===");
+            for c in &conflicts {
+                eprintln!(
+                    "  Conflict at ({:?}, {:?}): production {} vs {}",
+                    c.nt, c.token, c.prod1, c.prod2
+                );
+            }
+            process::exit(1);
+        }
+    }
+
     // ===== 阶段 3: 语义分析 =====
     let mut analyzer = SemanticAnalyzer::new();
     analyzer.analyze(&prog);
@@ -113,7 +137,16 @@ fn main() {
     }
 
     // ===== 阶段 4: MIPS 代码生成 =====
-    let asm = mips::compile(&prog);
+    let asm = match mips::compile(&prog) {
+        Ok(asm) => asm,
+        Err(errors) => {
+            eprintln!("=== Codegen Errors ===");
+            for err in &errors {
+                eprintln!("  {}", err);
+            }
+            process::exit(1);
+        }
+    };
 
     match fs::write(&output_path, &asm) {
         Ok(_) => println!("Success: MIPS assembly written to '{}'", output_path),
