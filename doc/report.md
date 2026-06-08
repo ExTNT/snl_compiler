@@ -208,6 +208,12 @@ spim -file samples/hello.asm
 Success: MIPS assembly written to 'samples/factorial.asm'
 ```
 
+<img src="./assets/image-20260608230131936.png" alt="image-20260608230131936" style="zoom: 50%;" />
+
+<img src="./assets/image-20260608230010205.png" alt="image-20260608230010205" style="zoom:33%;" />
+
+<img src="./assets/image-20260608230159743.png" alt="image-20260608230159743" style="zoom: 50%;" />
+
 ### 错误报告示例
 
 ```
@@ -254,7 +260,7 @@ Warning: LL(1) verification failed (RD parse succeeded)
 
 ## 源程序核心代码
 
-### 1. 词法分析核心 —— DFA 状态机（src/lexer/dfa.rs）
+### 词法分析核心 —— DFA 状态机（src/lexer/dfa.rs）
 
 DFA 以字符驱动，在 9 个状态间迁移，实现最长匹配和回溯策略：
 
@@ -290,7 +296,7 @@ pub fn advance(&mut self, ch: char) -> Option<DfaResult> {
 
 **设计要点**：`DfaResult.backtrack` 标志指示当前字符是否属于下一个 Token——标识符和数字识别完成后 `backtrack=true`，双字符运算符（`:=`、`..`）消费第二个字符后 `backtrack=false`。
 
-### 2. 关键字查找（src/lexer/keyword.rs）
+### 关键字查找（src/lexer/keyword.rs）
 
 21 个关键字按字母排序，使用二分查找，大小写不敏感：
 
@@ -328,7 +334,7 @@ pub fn lookup_keyword(ident: &str) -> TokenKind {
 }
 ```
 
-### 3. AST 节点定义（src/ast/nodes.rs）
+### AST 节点定义（src/ast/nodes.rs）
 
 所有 AST 节点携带 `Loc` 信息用于错误定位。核心节点包括：
 
@@ -374,7 +380,7 @@ pub enum Selector {
 }
 ```
 
-### 4. 递归下降解析器 —— 表达式优先级（src/parser/rd.rs）
+### 递归下降解析器 —— 表达式优先级（src/parser/rd.rs）
 
 运算符优先级通过函数调用层次编码，无需单独的优先级表：
 
@@ -395,7 +401,7 @@ fn sync(&mut self, sync_tokens: &[TokenKind]) {
 }
 ```
 
-### 5. 语义分析 —— 符号表与类型检查（src/semantic/）
+### 语义分析 —— 符号表与类型检查（src/semantic/）
 
 ```rust
 /// 嵌套作用域符号表：HashMap 栈
@@ -447,7 +453,7 @@ fn types_compatible(a: &TypeInfo, b: &TypeInfo) -> bool {
 }
 ```
 
-### 6. MIPS 代码生成 —— 表达式编译（src/codegen/mips.rs）
+### MIPS 代码生成 —— 表达式编译（src/codegen/mips.rs）
 
 ```rust
 fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
@@ -488,7 +494,7 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
 }
 ```
 
-### 7. 主程序编译流水线（src/main.rs）
+### 主程序编译流水线（src/main.rs）
 
 ```rust
 fn main() {
@@ -519,7 +525,7 @@ fn main() {
 }
 ```
 
-### 8. 统一错误处理（src/error.rs）
+### 统一错误处理（src/error.rs）
 
 ```rust
 pub enum ErrorKind {
