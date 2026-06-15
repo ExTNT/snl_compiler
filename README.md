@@ -72,9 +72,9 @@ flowchart TD
 
 | 颜色 | CSS 类 | 匹配节点 | 语义类别 |
 |------|--------|----------|----------|
-| <span style="color:#6b8fdb">█</span> 钢蓝 `#6b8fdb` | `.tn-decl` | `ProK` `PheadK` `VarK` `TypeK` `ProcDecK` `DecK` | 声明 |
-| <span style="color:#6ba87a">█</span> 翠绿 `#6ba87a` | `.tn-stmt` | `StmLk` `StmtK` | 语句 |
-| <span style="color:#d96c7e">█</span> 珊瑚 `#d96c7e` | `.tn-expr` | `ExpK` | 表达式 |
+| <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Crect width='14' height='14' fill='%236b8fdb' rx='2'/%3E%3C/svg%3E" width="14" /> 钢蓝 `#6b8fdb` | `.tn-decl` | `ProK` `PheadK` `VarK` `TypeK` `ProcDecK` `DecK` | 声明 |
+| <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Crect width='14' height='14' fill='%236ba87a' rx='2'/%3E%3C/svg%3E" width="14" /> 翠绿 `#6ba87a` | `.tn-stmt` | `StmLk` `StmtK` | 语句 |
+| <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Crect width='14' height='14' fill='%23d96c7e' rx='2'/%3E%3C/svg%3E" width="14" /> 珊瑚 `#d96c7e` | `.tn-expr` | `ExpK` | 表达式 |
 
 ---
 
