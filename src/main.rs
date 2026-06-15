@@ -1,9 +1,9 @@
 //! SNL 编译器入口点。
 //!
 //! 四阶段编译管线：
-//! 1. 词法分析 → 生成 `*_token.md`
-//! 2. 语法分析 → 递归下降构建 AST + LL(1) 验证，生成 `*_tree.md`
-//! 3. 语义分析 → 生成 `*_table.md`
+//! 1. 词法分析
+//! 2. 语法分析 → 递归下降构建 AST + LL(1) 验证
+//! 3. 语义分析 → 生成 `*_report.html`
 //! 4. 代码生成 → 输出 MIPS 汇编 `.asm`
 //!
 //! 用法：`snl_compiler <input.snl> [-o <output.asm>]`
@@ -15,7 +15,7 @@ use std::fs;
 use std::process;
 
 use snl_compiler::codegen::mips;
-use snl_compiler::lexer::Lexer;
+use snl_compiler::lexer::{Lexer, LexerError, Token};
 use snl_compiler::parser::ll1::Ll1Parser;
 use snl_compiler::parser::rd::RdParser;
 use snl_compiler::semantic::analyzer::SemanticAnalyzer;
@@ -49,18 +49,26 @@ fn main() {
     // ===== 阶段 1: 词法分析 =====
     let mut lexer = Lexer::new();
     let (tokens, lex_errors) = lexer.tokenize(&source);
+    let saved_tokens: Vec<Token> = tokens.to_vec();
+    let saved_lex_errors: Vec<LexerError> = lex_errors.to_vec();
 
-    // 生成 token.md
-    let token_md = format_token_md(input_path, tokens, lex_errors);
-    fs::write(format!("{}_token.md", base_name), &token_md).unwrap_or_else(|e| {
-        eprintln!("Warning: could not write token.md: {}", e);
-    });
-
-    if !lex_errors.is_empty() {
+    if !saved_lex_errors.is_empty() {
         eprintln!("=== Lexical Errors ===");
-        for err in lex_errors {
+        for err in &saved_lex_errors {
             eprintln!("  Line {}:{} — {}", err.line, err.col, err.msg);
         }
+        let html = format_report_html(
+            input_path,
+            &saved_tokens,
+            &saved_lex_errors,
+            None,
+            &[],
+            None,
+            &[],
+        );
+        fs::write(format!("{}_report.html", base_name), &html).unwrap_or_else(|e| {
+            eprintln!("Warning: could not write report: {}", e);
+        });
         process::exit(1);
     }
 
@@ -78,12 +86,6 @@ fn main() {
     };
 
     let syntax_errors = parser.errors().to_vec();
-
-    // 生成 tree.md（AST + 语法错误）
-    let tree_md = format_tree_md(input_path, &prog, &syntax_errors);
-    fs::write(format!("{}_tree.md", base_name), &tree_md).unwrap_or_else(|e| {
-        eprintln!("Warning: could not write tree.md: {}", e);
-    });
 
     if !syntax_errors.is_empty() {
         eprintln!("=== Syntax Errors ===");
@@ -122,10 +124,18 @@ fn main() {
     let semantic_errors = analyzer.errors().to_vec();
     let scope_snapshots = analyzer.scope_snapshots().to_vec();
 
-    // 生成 table.md（符号表 + 语义错误）
-    let table_md = format_table_md(input_path, &scope_snapshots, &semantic_errors);
-    fs::write(format!("{}_table.md", base_name), &table_md).unwrap_or_else(|e| {
-        eprintln!("Warning: could not write table.md: {}", e);
+    // 生成 HTML 报告
+    let html = format_report_html(
+        input_path,
+        &saved_tokens,
+        &saved_lex_errors,
+        Some(&prog),
+        &syntax_errors,
+        Some(&scope_snapshots),
+        &semantic_errors,
+    );
+    fs::write(format!("{}_report.html", base_name), &html).unwrap_or_else(|e| {
+        eprintln!("Warning: could not write report: {}", e);
     });
 
     if !semantic_errors.is_empty() {
@@ -311,7 +321,6 @@ fn format_table_md(
 /// 生成 HTML 报告，将 Token 序列、语法树与符号表整合为自包含的交互式页面。
 ///
 /// 包含嵌入式 CSS 与 JS，替换三个 Markdown 诊断文件。
-#[allow(dead_code)]
 fn format_report_html(
     input_path: &str,
     tokens: &[snl_compiler::lexer::Token],
@@ -701,7 +710,6 @@ fn format_report_html(
 
 /// 对 HTML 进行转义。
 /// 将 `<`、`>`、`&`、`"` 分别替换为 `&lt;`、`&gt;`、`&amp;`、`&quot;`。
-#[allow(dead_code)]
 fn escape_html(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
