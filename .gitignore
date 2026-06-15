@@ -1,4 +1,5 @@
 /target
+*_report.html
 .omo
 AGENTS.md
 .git
