@@ -191,13 +191,11 @@ spim -file samples/hello.asm
 
 ### 编译输出文件
 
-编译器在每个阶段生成诊断输出文件（Markdown 格式），便于分步检查：
+编译器输出自包含 HTML 报告（`*_report.html`），汇总各阶段诊断信息，支持在浏览器中切换标签页查看：
 
 | 输出文件 | 内容说明 |
 |---------|---------|
-| `*_token.md` | Token 序列表（序号、类型、值、行:列）+ 词法错误 |
-| `*_tree.md` | 抽象语法树层次文本 + 语法错误列表 |
-| `*_table.md` | 符号表（按作用域分层）+ 语义错误列表 |
+| `*_report.html` | 自包含 HTML 报告（含 Token 序列、AST、符号表、错误信息；标签页切换、可折叠 AST、可排序表格、全文搜索） |
 | `*.asm` | MIPS 汇编代码（.data + .text 段），可直接在 SPIM 运行 |
 
 ### 编译成功示例
@@ -498,11 +496,11 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
 
 ```rust
 fn main() {
-    // 阶段 1: 词法分析 → *_token.md
+    // 阶段 1: 词法分析（诊断 → *_report.html）
     let (tokens, lex_errors) = lexer.tokenize(&source);
     if !lex_errors.is_empty() { /* 打印错误，exit */ }
 
-    // 阶段 2: 递归下降语法分析 → *_tree.md
+    // 阶段 2: 递归下降语法分析（诊断 → *_report.html）
     let prog = parser.parse()?;
 
     // 阶段 2.5: LL(1) 文法验证
@@ -515,7 +513,7 @@ fn main() {
         Err(conflicts) => { process::exit(1); }
     }
 
-    // 阶段 3: 语义分析 → *_table.md
+    // 阶段 3: 语义分析（诊断 → *_report.html）
     analyzer.analyze(&prog);
     if !semantic_errors.is_empty() { process::exit(1); }
 

@@ -50,9 +50,7 @@ flowchart TD
     SEM["<b>语义分析</b><br/>12种错误检查"]
     CG["<b>目标代码生成</b><br/>全类型支持"]
 
-    TOKEN["*_token.md"]
-    TREE["*_tree.md"]
-    TABLE["*_table.md"]
+    REPORT["*_report.html"]
     ASM["*.asm"]
 
     SRC --> LEX
@@ -61,10 +59,12 @@ flowchart TD
     SEM -->|"符号表"| CG
     CG -->|"MIPS 汇编"| ASM
 
-    LEX -.-> TOKEN
-    PARSE -.-> TREE
-    SEM -.-> TABLE
+    LEX -.-> REPORT
+    PARSE -.-> REPORT
+    SEM -.-> REPORT
 ```
+
+编译时会生成交互式 HTML 报告（`*_report.html`），包含 Token 列表、语法树和符号表的可视化展示，支持标签页切换、表格排序和搜索功能。
 
 ---
 
@@ -145,7 +145,7 @@ cargo test               # 全部 122 个测试
 ### 编译 SNL 程序
 
 ```bash
-# 编译 hello.snl → hello.asm (同时生成 _token.md, _tree.md, _table.md)
+# 编译 hello.snl → hello.asm (同时生成交互式 HTML 报告 hello_report.html)
 cargo run -- samples/hello.snl
 
 # 指定输出文件名

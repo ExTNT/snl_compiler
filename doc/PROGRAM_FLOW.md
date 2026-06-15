@@ -12,9 +12,7 @@ flowchart TD
     SEM["<b>语义分析 (Semantic)</b>"]
     CG["<b>代码生成 (Codegen)</b>"]
 
-    TOKEN["token.md"]
-    TREE["tree.md"]
-    TABLE["table.md"]
+    REPORT["*_report.html"]
     ASM["MIPS 汇编 (.asm)"]
 
     SRC --> LEX
@@ -23,12 +21,12 @@ flowchart TD
     SEM -->|"符号表"| CG
     CG -->|"MIPS 汇编"| ASM
 
-    LEX -.-> TOKEN
-    PARSE -.-> TREE
-    SEM -.-> TABLE
+    LEX -.-> REPORT
+    PARSE -.-> REPORT
+    SEM -.-> REPORT
 ```
 
-四个阶段均生成诊断输出 Markdown 文件，便于分步检查编译中间结果。
+各阶段诊断信息汇总输出到单个 HTML 报告文件（`*_report.html`），支持在浏览器中分步查看编译中间结果。
 
 ## 2. 主程序流程 (main.rs)
 
@@ -36,11 +34,11 @@ flowchart TD
 flowchart TD
     START([开始]) --> READ[读取 .snl 源文件]
     READ --> P1["阶段 1: 词法分析"]
-    P1 --> P1_OUT[输出 token.md]
+    P1 --> P1_OUT[诊断 → _report.html]
     P1_OUT --> P1_ERR{词法错误?}
     P1_ERR -->|是| EXIT1[打印错误并退出]
     P1_ERR -->|通过| P2["阶段 2: 递归下降语法分析"]
-    P2 --> P2_OUT[输出 tree.md]
+    P2 --> P2_OUT[诊断 → _report.html]
     P2_OUT --> P2_ERR{语法错误?}
     P2_ERR -->|是| PRINT[打印语法错误]
     P2_ERR -->|否| P25["阶段 2.5: LL(1) 文法验证"]
@@ -51,7 +49,7 @@ flowchart TD
     P25_WARN -->|是| PRINT_WARN[打印 LL(1) 警告]
     P25_WARN -->|否| P3["阶段 3: 语义分析"]
     PRINT_WARN --> P3
-    P3 --> P3_OUT[输出 table.md]
+    P3 --> P3_OUT[诊断 → _report.html]
     P3_OUT --> P3_ERR{语义错误?}
     P3_ERR -->|是| EXIT2[打印错误并退出]
     P3_ERR -->|通过| P4["阶段 4: MIPS 代码生成"]
@@ -261,7 +259,7 @@ procedure 栈帧:
   integer → TK::Integer
   ...
   │
-  ▼ 输出 token.md
+  ▼ 输出到 _report.html
 语法分析 (AST):
   Program { name: factorial
     decl: DeclarePart { vars: [result, n], procs: [fact] }
@@ -269,13 +267,13 @@ procedure 栈帧:
   │
   ▼ LL(1) 验证 (文法冲突检查 + 表驱动解析)
   │   (静默通过，无冲突/验证错误)
-  ▼ 输出 tree.md
+  ▼ 输出到 _report.html
 语义分析:
   ✓ 符号表: result, n, fact(proc), m(param), temp(local)
   ✓ 类型检查通过
   ✓ 重复定义检测: 无重复
   │
-  ▼ 输出 table.md
+  ▼ 输出到 _report.html
 代码生成 (.asm):
   .data
   var_result: .word 0

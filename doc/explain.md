@@ -511,11 +511,11 @@ pub fn compile(prog: &Program) -> Result<String, Vec<CompileError>> {
 ```rust
 // src/main.rs - 五阶段流水线（含 LL(1) 验证）
 fn main() {
-    // 阶段 1: 词法分析 → token.md
+    // 阶段 1: 词法分析（诊断 → _report.html）
     let (tokens, lex_errors) = lexer.tokenize(&source);
     if !lex_errors.is_empty() { process::exit(1); }
 
-    // 阶段 2: 递归下降语法分析 → tree.md
+    // 阶段 2: 递归下降语法分析（诊断 → _report.html）
     let prog = parser.parse()?;
 
     // 阶段 2.5: LL(1) 文法验证
@@ -532,7 +532,7 @@ fn main() {
         }
     }
 
-    // 阶段 3: 语义分析 → table.md
+    // 阶段 3: 语义分析（诊断 → _report.html）
     analyzer.analyze(&prog);
     if !semantic_errors.is_empty() { process::exit(1); }
 
@@ -549,9 +549,7 @@ fn main() {
 
 | 文件 | 内容 | 生成阶段 |
 |------|------|---------|
-| `*_token.md` | 单词序列表与词法错误 | 词法分析后 |
-| `*_tree.md` | 抽象语法树与语法错误 | 语法分析后 |
-| `*_table.md` | 符号表与语义错误 | 语义分析后 |
+| `*_report.html` | 自包含 HTML 报告（含 Token 序列、AST、符号表、错误信息，支持标签页切换与搜索） | 全部阶段完成后 |
 | `*.asm` | MIPS 汇编代码 | 代码生成后 |
 
 ### 5.3 错误处理策略
