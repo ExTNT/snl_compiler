@@ -190,29 +190,42 @@ fn format_report_html(
 
     // ===== CSS =====
     h.push_str("<style>\n");
-    h.push_str("body{font-family:-apple-system,sans-serif;max-width:1100px;margin:auto;padding:10px}\n");
-    h.push_str(".tab-bar{display:flex;border-bottom:2px solid #ccc;margin-bottom:12px}\n");
-    h.push_str(".tab-btn{padding:8px 18px;border:none;background:#eee;cursor:pointer;font-size:15px;margin-right:2px;border-radius:4px 4px 0 0}\n");
-    h.push_str(".tab-btn.active{background:#fff;border:2px solid #ccc;border-bottom:2px solid #fff;margin-bottom:-2px}\n");
-    h.push_str(".tab-content{display:none}\n");
+    h.push_str("body{font:15px/1.6 -apple-system,system-ui,sans-serif;max-width:1100px;margin:auto;padding:24px 16px;background:#f8f9fa;color:#1a1a2e}\n");
+    h.push_str("h1{font-size:24px;color:#0f172a;margin:0 0 20px}\n");
+    h.push_str("h2{font-size:16px;color:#334155;border-bottom:1px solid #e5e7eb;padding-bottom:6px;margin:20px 0 12px}\n");
+    h.push_str("h3{font-size:14px;color:#475569;margin:16px 0 8px}\n");
+    h.push_str(".tab-bar{display:flex;gap:8px;margin-bottom:20px}\n");
+    h.push_str(".tab-btn{padding:8px 20px;border:none;background:transparent;color:#64748b;font-size:14px;font-weight:500;border-radius:6px;cursor:pointer;transition:all .15s}\n");
+    h.push_str(".tab-btn:hover{background:#e5e7eb;color:#334155}\n");
+    h.push_str(".tab-btn.active{background:#2563eb;color:#fff}\n");
+    h.push_str(".tab-content{background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);padding:24px;margin-bottom:16px;display:none}\n");
     h.push_str(".tab-content:first-of-type{display:block}\n");
-    h.push_str("table{border-collapse:collapse;width:100%;margin:10px 0;font-size:14px}\n");
-    h.push_str("th{background:#f5f5f5;position:sticky;top:0;text-align:left;padding:6px 8px;border:1px solid #ddd}\n");
-    h.push_str("td{padding:4px 8px;border:1px solid #ddd}\n");
-    h.push_str("tr:nth-child(even){background:#fafafa}\n");
-    h.push_str("tr.error-row{background:#fff0f0}\n");
-    h.push_str("tr.error-row td{border-color:#fcc}\n");
-    h.push_str(".scope-label{font-weight:bold;margin-top:16px;font-size:15px}\n");
-    h.push_str(".scope-desc{margin:8px 0;color:#555}\n");
+    h.push_str(".search-bar{margin-bottom:16px}\n");
+    h.push_str(".search-bar input{width:260px;padding:8px 14px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;outline:none;transition:border-color .15s}\n");
+    h.push_str(".search-bar input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}\n");
+    h.push_str("table{border-collapse:collapse;width:100%;font-size:13px}\n");
+    h.push_str("th{background:#f1f5f9;color:#475569;font-weight:600;text-align:left;padding:10px 12px;border-bottom:2px solid #e5e7eb;position:sticky;top:0;cursor:pointer;white-space:nowrap}\n");
+    h.push_str("th:hover{background:#e2e8f0}\n");
+    h.push_str("td{padding:8px 12px;border-bottom:1px solid #f1f5f9}\n");
+    h.push_str("tr:hover td{background:#f8fafc}\n");
+    h.push_str(".scope-label{font-weight:600;color:#0f172a;margin-top:24px;font-size:15px}\n");
+    h.push_str(".scope-desc{margin:8px 0;color:#64748b;line-height:1.7}\n");
+    h.push_str(".tree-node{margin:0;border-left:3px solid transparent;transition:border-color .15s}\n");
+    h.push_str(".tree-node[open]{margin-bottom:2px}\n");
+    h.push_str(".tree-node summary{cursor:pointer;font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:13px;white-space:pre;padding:3px 8px;border-radius:4px;transition:background .1s}\n");
+    h.push_str(".tree-node summary:hover{background:#f1f5f9}\n");
     h.push_str(".tree-node div{padding-left:20px}\n");
-    h.push_str("details.tree-node>summary{cursor:pointer;font-family:monospace;white-space:pre;padding:1px 0}\n");
-    h.push_str("details.tree-node{margin:0}\n");
-    h.push_str(".tree-text{font-family:monospace;white-space:pre;padding:1px 0}\n");
-    h.push_str(".err-section{margin:16px 0}\n");
-    h.push_str(".err-section h3{color:#c00}\n");
-    h.push_str(".no-errors{color:#888;margin:8px 0}\n");
-    h.push_str("h2{margin-top:20px;border-bottom:1px solid #eee;padding-bottom:4px}\n");
-    h.push_str("@media print{.tab-bar{display:none}}\n");
+    h.push_str(".tree-text{font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:13px;white-space:pre;padding:2px 8px;color:#64748b}\n");
+    h.push_str("/* Syntax tree color coding */\n");
+    h.push_str(".tn-decl{border-left-color:#3b82f6!important}.tn-decl summary{color:#1e40af}\n");
+    h.push_str(".tn-stmt{border-left-color:#10b981!important}.tn-stmt summary{color:#065f46}\n");
+    h.push_str(".tn-expr{border-left-color:#f59e0b!important}.tn-expr summary{color:#92400e}\n");
+    h.push_str("/* Tree indent guides */\n");
+    h.push_str(".tree-guide{border-left:1px dashed #e5e7eb;margin-left:8px;padding-left:12px}\n");
+    h.push_str(".err-section{margin:16px 0;padding:12px 16px;background:#fef2f2;border-left:3px solid #ef4444;border-radius:0 8px 8px 0}\n");
+    h.push_str(".err-section h3{color:#dc2626;margin-top:0}\n");
+    h.push_str(".no-errors{color:#9ca3af;font-style:italic;margin:8px 0}\n");
+    h.push_str("@media print{body{background:#fff;font-size:12px}.tab-bar,.search-bar{display:none}.tab-content{box-shadow:none;border:1px solid #ddd;break-inside:avoid}}\n");
     h.push_str("</style>\n");
 
     // ===== 头部脚本（用于页面加载时初始化） =====
@@ -384,9 +397,11 @@ fn format_report_html(
                         ));
                     } else {
                         let _ = is_last; // suppress unused warning
+                        let type_class = node_type_class(content);
                         h.push_str(&format!(
-                            "<details class=\"tree-node\" open style=\"padding-left:{}px\"><summary>{}</summary>\n",
+                            "<div class=\"tree-guide\" style=\"padding-left:{}px\"><details class=\"tree-node {}\" open><summary>{}</summary>\n",
                             depth * 20,
+                            type_class,
                             escape_html(content)
                         ));
                     }
@@ -420,7 +435,7 @@ fn format_report_html(
                 })
                 .count();
             for _ in 0..details_count {
-                h.push_str("</details>\n");
+                h.push_str("</details></div>\n");
             }
 
             h.push_str("<br>\n");
@@ -554,6 +569,29 @@ fn format_report_html(
     h.push_str("</body>\n</html>\n");
 
     h
+}
+
+/// 根据 AST 节点内容返回类型特定的 CSS 类名。
+/// - 声明类（ProK/PheadK/VarK/TypeK/ProcDecK/DecK）→ `"tn-decl"`
+/// - 语句类（StmLk/StmtK）→ `"tn-stmt"`
+/// - 表达式类（ExpK）→ `"tn-expr"`
+/// - 其他 → `""`（无类型类）
+fn node_type_class(content: &str) -> &str {
+    if content.starts_with("ProK")
+        || content.starts_with("PheadK")
+        || content.starts_with("VarK")
+        || content.starts_with("TypeK")
+        || content.starts_with("ProcDecK")
+        || content.starts_with("DecK")
+    {
+        "tn-decl"
+    } else if content.starts_with("StmLk") || content.starts_with("StmtK") {
+        "tn-stmt"
+    } else if content.starts_with("ExpK") {
+        "tn-expr"
+    } else {
+        ""
+    }
 }
 
 /// 对 HTML 进行转义。
