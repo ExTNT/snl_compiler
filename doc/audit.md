@@ -380,3 +380,11 @@
 | 缺失数组边界 | `array[..5]` → 语法错误，解析继续 |
 | 解析失败报告 | `_report.html` 已生成，含部分数据 |
 
+## 后续结构调整：HTML 报告模块拆分（2026-06-15）
+
+HTML 报告生成逻辑已从 `src/main.rs` 拆分到 `src/report.rs`。当前职责划分为：
+
+- `src/main.rs`：命令行入口、编译流水线编排、错误退出策略、输出文件写入
+- `src/report.rs`：`format_report_html()`、HTML 转义、语法树浏览器渲染、报告结构测试
+
+审计条目中的旧 `main.rs` 行号保留为当时修复记录；当前代码以 `src/report.rs` 为 HTML 报告实现位置。

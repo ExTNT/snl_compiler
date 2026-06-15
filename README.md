@@ -98,6 +98,7 @@ snl_compiler/
 │   └── expected_output.md
 └── src/
     ├── main.rs              # 程序入口，命令行接口
+    ├── report.rs            # 自包含 HTML 诊断报告生成
     ├── lib.rs               # 模块导出
     ├── error.rs             # 统一错误类型定义
     ├── lexer/               # 词法分析

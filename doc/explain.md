@@ -515,7 +515,7 @@ pub fn compile(prog: &Program) -> Result<String, Vec<CompileError>> {
 ### 5.1 编译流水线
 
 ```rust
-// src/main.rs - 五阶段流水线（含 LL(1) 验证）
+// src/main.rs - 编译流水线编排（含 LL(1) 验证）
 fn main() {
     // 阶段 1: 词法分析（诊断 → _report.html）
     let (tokens, lex_errors) = lexer.tokenize(&source);
@@ -540,6 +540,8 @@ fn main() {
 
     // 阶段 3: 语义分析（诊断 → _report.html）
     analyzer.analyze(&prog);
+    let html = format_report_html(...);
+    fs::write(format!("{}_report.html", base_name), &html)?;
     if !semantic_errors.is_empty() { process::exit(1); }
 
     // 阶段 4: MIPS 代码生成 → .asm
@@ -550,6 +552,8 @@ fn main() {
     fs::write(&output_path, &asm)?;
 }
 ```
+
+`src/main.rs` 负责 CLI 参数解析、编译阶段调度、错误退出策略和输出文件写入；`src/report.rs` 负责 `format_report_html()`、HTML 转义、语法树节点样式分类和报告结构测试。
 
 ### 5.2 诊断输出文件
 

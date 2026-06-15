@@ -81,13 +81,19 @@ flowchart TD
     PARSE["<b>语法分析器</b><br/>递归下降（主） + LL(1) 表驱动（验证）<br/><i>src/parser/</i><br/>生成 AST，恐慌模式错误恢复"]
     SEM["<b>语义分析器</b><br/>两遍遍历：符号表构建 → 类型检查<br/><i>src/semantic/</i><br/>检查 12 种语义错误"]
     CG["<b>代码生成器</b><br/>递归遍历 AST 生成 MIPS 汇编<br/><i>src/codegen/</i><br/>类型感知加载/存储，栈帧管理"]
+    REP["<b>报告生成器</b><br/>自包含 HTML 诊断报告<br/><i>src/report.rs</i><br/>Token / AST / 符号表 / 错误"]
     ASM["MIPS 汇编 (.asm)"]
+    HTML["HTML 报告 (*_report.html)"]
 
     SRC --> LEX
     LEX -->|"Token 序列"| PARSE
     PARSE -->|"抽象语法树 (AST)"| SEM
     SEM -->|"标注后的 AST + 符号表"| CG
     CG -->|"MIPS 汇编"| ASM
+    LEX -.-> REP
+    PARSE -.-> REP
+    SEM -.-> REP
+    REP -.-> HTML
 ```
 
 ### 词法分析模块（src/lexer/）
@@ -503,6 +509,8 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
 
 ### 主程序编译流水线（src/main.rs）
 
+`main.rs` 只负责命令行参数处理、四阶段编译流程编排、错误退出策略和输出文件写入。自包含 HTML 报告的渲染逻辑已拆分到 `src/report.rs`，由 `main.rs` 在词法错误、解析失败和语义分析完成后调用 `format_report_html()`。
+
 ```rust
 fn main() {
     // 阶段 1: 词法分析（诊断 → *_report.html）
@@ -524,6 +532,8 @@ fn main() {
 
     // 阶段 3: 语义分析（诊断 → *_report.html）
     analyzer.analyze(&prog);
+    let html = format_report_html(...);
+    fs::write(format!("{}_report.html", base_name), &html)?;
     if !semantic_errors.is_empty() { process::exit(1); }
 
     // 阶段 4: MIPS 代码生成 → *.asm
@@ -531,6 +541,10 @@ fn main() {
     fs::write(&output_path, &asm)?;
 }
 ```
+
+### HTML 诊断报告生成（src/report.rs）
+
+`report.rs` 负责生成 `*_report.html`：内嵌 CSS/JS，渲染 Token 表、语法树浏览器、符号表和各阶段错误信息。语法树浏览器支持横向滚动、展开/折叠、搜索过滤和匹配高亮；相关 HTML 转义与报告结构测试也集中在该模块。
 
 ### 统一错误处理（src/error.rs）
 

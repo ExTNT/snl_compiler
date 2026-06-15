@@ -11,6 +11,7 @@ flowchart TD
     PARSE["<b>语法分析 (Parser)</b><br/>递归下降 + LL(1) 验证"]
     SEM["<b>语义分析 (Semantic)</b>"]
     CG["<b>代码生成 (Codegen)</b>"]
+    RENDER["<b>报告生成 (Report)</b><br/>src/report.rs"]
 
     REPORT["*_report.html"]
     ASM["MIPS 汇编 (.asm)"]
@@ -21,12 +22,13 @@ flowchart TD
     SEM -->|"符号表"| CG
     CG -->|"MIPS 汇编"| ASM
 
-    LEX -.-> REPORT
-    PARSE -.-> REPORT
-    SEM -.-> REPORT
+    LEX -.-> RENDER
+    PARSE -.-> RENDER
+    SEM -.-> RENDER
+    RENDER -.-> REPORT
 ```
 
-各阶段诊断信息汇总输出到单个 HTML 报告文件（`*_report.html`），支持在浏览器中分步查看编译中间结果。
+`main.rs` 负责编排编译流水线与写入输出文件；`report.rs` 负责将各阶段诊断信息渲染为单个 HTML 报告文件（`*_report.html`），支持在浏览器中分步查看编译中间结果。
 
 ## 2. 主程序流程 (main.rs)
 
@@ -62,6 +64,7 @@ flowchart TD
 - LL(1) 验证作为**必需阶段**运行，文法冲突致命退出，验证不匹配产生警告
 - 代码生成返回 `Result`，panic 已完全消除
 - 所有错误报告使用统一的 `CompileError` 类型（含 `Display` 和 `Error` trait 实现）
+- HTML 报告生成已拆分到 `src/report.rs`，`main.rs` 只调用 `format_report_html()` 写入诊断文件
 
 ## 3. 词法分析模块 (src/lexer/)
 
