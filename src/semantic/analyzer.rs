@@ -28,6 +28,12 @@ pub struct SemanticAnalyzer {
     scope_snapshots: Vec<(usize, HashMap<String, SymbolEntry>)>,
 }
 
+impl Default for SemanticAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SemanticAnalyzer {
     pub fn new() -> Self {
         SemanticAnalyzer {
@@ -272,19 +278,16 @@ impl SemanticAnalyzer {
         let lhs_ty = self.check_var_access(lhs);
 
         // LHS 和 RHS 类型不兼容时报告错误
-        match (&lhs_ty, &rhs_ty) {
-            (Some(l), Some(r)) => {
-                let rl = self.resolve_type(l);
-                let rr = self.resolve_type(r);
+        if let (Some(l), Some(r)) = (&lhs_ty, &rhs_ty) {
+                let rl = self.resolve_type(l, &mut Vec::new());
+                let rr = self.resolve_type(r, &mut Vec::new());
                 if !types_compatible(&rl, &rr) {
                     self.error(
                         SemanticErrCode::AssignTypeMismatch,
-                        "Assignment type mismatch",
-                        loc,
-                    );
-                }
+                    "Assignment type mismatch",
+                    loc,
+                );
             }
-            _ => {}
         }
     }
 
@@ -327,24 +330,20 @@ impl SemanticAnalyzer {
                 }
                 for (i, arg) in args.iter().enumerate() {
                     let arg_ty = self.check_exp(arg);
-                    if let Some(param) = params.get(i) {
-                        match &arg_ty {
-                            Some(t) => {
-                                let rt = self.resolve_type(t);
-                                let rp = self.resolve_type(&param.typ);
-                                if !types_compatible(&rt, &rp) {
-                                    self.error(
-                                        SemanticErrCode::ParamTypeMismatch,
-                                        format!(
-                                            "Argument {} type mismatch in call to '{}'",
-                                            i + 1,
-                                            name
-                                        ),
-                                        loc,
-                                    );
-                                }
-                            }
-                            _ => {}
+                    if let Some(param) = params.get(i)
+                        && let Some(t) = &arg_ty {
+                                let rt = self.resolve_type(t, &mut Vec::new());
+                                let rp = self.resolve_type(&param.typ, &mut Vec::new());
+                            if !types_compatible(&rt, &rp) {
+                                self.error(
+                                    SemanticErrCode::ParamTypeMismatch,
+                                    format!(
+                                        "Argument {} type mismatch in call to '{}'",
+                                        i + 1,
+                                        name
+                                    ),
+                                    loc,
+                            );
                         }
                     }
                 }
@@ -365,19 +364,16 @@ impl SemanticAnalyzer {
             } => {
                 let lt = self.check_exp(left);
                 let rt = self.check_exp(right);
-                match (&lt, &rt) {
-                    (Some(l), Some(r)) => {
-                        let rl = self.resolve_type(l);
-                        let rr = self.resolve_type(r);
-                        if !types_compatible(&rl, &rr) {
-                            self.error(
-                                SemanticErrCode::OperatorTypeMismatch,
-                                "Operator operand type mismatch",
-                                *loc,
-                            );
-                        }
+                if let (Some(l), Some(r)) = (&lt, &rt) {
+                        let rl = self.resolve_type(l, &mut Vec::new());
+                        let rr = self.resolve_type(r, &mut Vec::new());
+                    if !types_compatible(&rl, &rr) {
+                        self.error(
+                            SemanticErrCode::OperatorTypeMismatch,
+                            "Operator operand type mismatch",
+                            *loc,
+                        );
                     }
-                    _ => {}
                 }
                 // SNL 中所有算术运算的结果均为整数类型
                 Some(TypeInfo::Integer)
@@ -410,8 +406,8 @@ impl SemanticAnalyzer {
                 match sel {
                     Selector::ArraySubscript(exp) => {
                         // 常量下标时检查范围
-                        if let Exp::IntConst(n, loc) = exp.as_ref() {
-                            if *n < *low || *n > *high {
+                        if let Exp::IntConst(n, loc) = exp.as_ref()
+                            && (*n < *low || *n > *high) {
                                 self.error(
                                     SemanticErrCode::ArraySubscriptRange,
                                     format!(
@@ -421,7 +417,6 @@ impl SemanticAnalyzer {
                                     *loc,
                                 );
                             }
-                        }
                         Some(*elem_ty.clone())
                     }
                     _ => {
@@ -442,15 +437,14 @@ impl SemanticAnalyzer {
                                 if let Selector::FieldSubscript(_, exp) = sel {
                                     match &f.typ {
                                         TypeInfo::Array(elem_ty, low, high) => {
-                                            if let Exp::IntConst(n, loc) = exp.as_ref() {
-                                                if *n < *low || *n > *high {
+                                            if let Exp::IntConst(n, loc) = exp.as_ref()
+                                                && (*n < *low || *n > *high) {
                                                     self.error(
                                                         SemanticErrCode::ArraySubscriptRange,
-                                                        format!("Array subscript out of range"),
+                                                        "Array subscript out of range".to_string(),
                                                         *loc,
                                                     );
                                                 }
-                                            }
                                             Some(*elem_ty.clone())
                                         }
                                         _ => {
@@ -480,7 +474,7 @@ impl SemanticAnalyzer {
                 }
             }
             TypeInfo::Named(_) => {
-                let resolved = self.resolve_type(ty);
+                let resolved = self.resolve_type(ty, &mut Vec::new());
                 if matches!(&resolved, TypeInfo::Named(_)) {
                     None
                 } else {
@@ -583,24 +577,42 @@ impl SemanticAnalyzer {
     }
 
     /// 解析 Named 类型别名，在符号表中查找并递归展开。
-    fn resolve_type(&self, ty: &TypeInfo) -> TypeInfo {
+    ///
+    /// `visited` 用于检测循环类型别名（如 `type A = B; type B = A`）。
+    fn resolve_type(&mut self, ty: &TypeInfo, visited: &mut Vec<String>) -> TypeInfo {
         match ty {
             TypeInfo::Named(name) => {
-                match self.symbols.lookup(name) {
-                    Some(entry) if entry.kind == IdKind::TypeId => {
-                        if let Some(inner) = &entry.typ {
-                            if matches!(inner, TypeInfo::Named(_)) {
-                                return self.resolve_type(inner);
-                            }
-                            return inner.clone();
-                        }
-                    }
-                    _ => {}
+                if visited.contains(name) {
+                    let loc = self
+                        .symbols
+                        .lookup(name)
+                        .map(|e| e.loc)
+                        .unwrap_or(Loc { line: 0, col: 0 });
+                    self.error(
+                        SemanticErrCode::CircularTypeAlias,
+                        format!("Circular type alias: '{}'", name),
+                        loc,
+                    );
+                    return ty.clone();
                 }
-                ty.clone()
+                visited.push(name.clone());
+                let inner_opt = self
+                    .symbols
+                    .lookup(name)
+                    .filter(|e| e.kind == IdKind::TypeId)
+                    .and_then(|e| e.typ.clone());
+                let result = match &inner_opt {
+                    Some(inner) if matches!(inner, TypeInfo::Named(_)) => {
+                        self.resolve_type(inner, visited)
+                    }
+                    Some(inner) => inner.clone(),
+                    None => ty.clone(),
+                };
+                visited.pop();
+                result
             }
             TypeInfo::Array(elem, low, high) => {
-                TypeInfo::Array(Box::new(self.resolve_type(elem)), *low, *high)
+                TypeInfo::Array(Box::new(self.resolve_type(elem, visited)), *low, *high)
             }
             _ => ty.clone(),
         }
@@ -803,5 +815,25 @@ mod tests {
     #[test]
     fn test_read_write_semantic_ok() {
         analyze_ok("program p var integer x; begin read(x); write(x) end.");
+    }
+
+    #[test]
+    fn test_circular_type_alias() {
+        let errors = analyze(
+            "program p type A = B; B = A; var A x; begin x := 1 end.",
+        );
+        assert!(
+            errors.iter().any(|e| matches!(
+                e.kind,
+                crate::error::ErrorKind::Semantic(SemanticErrCode::CircularTypeAlias)
+            )),
+            "Expected CircularTypeAlias error, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_valid_type_alias_chain() {
+        analyze_ok("program p type A = B; B = integer; var A x; begin x := 1 end.");
     }
 }

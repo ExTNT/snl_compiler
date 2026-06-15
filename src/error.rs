@@ -33,6 +33,8 @@ pub enum SemanticErrCode {
     CondNotBool,
     /// 运算符操作数类型不匹配
     OperatorTypeMismatch,
+    /// 循环类型别名（如 type A = B; type B = A）
+    CircularTypeAlias,
 }
 
 /// 错误阶段/类别。
