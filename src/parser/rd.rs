@@ -254,35 +254,38 @@ impl<'a> RdParser<'a> {
         let loc = self.loc();
         self.match_token(TokenKind::Array);
         self.match_token(TokenKind::LBracket);
-        let low = self.parse_low();
+        let low_opt = self.parse_low();
         self.match_token(TokenKind::Range);
-        let high = self.parse_top();
+        let high_opt = self.parse_top();
         self.match_token(TokenKind::RBracket);
         self.match_token(TokenKind::Of);
         let elem_type = self.parse_base_type();
-        TypeBody::Array(ArrayTypeDef {
-            low,
-            high,
-            elem_type,
-            loc,
-        })
+        match (low_opt, high_opt) {
+            (Some(low), Some(high)) => TypeBody::Array(ArrayTypeDef {
+                low,
+                high,
+                elem_type,
+                loc,
+            }),
+            _ => TypeBody::Base(BaseType::Integer),
+        }
     }
 
-    fn parse_low(&mut self) -> i64 {
+    fn parse_low(&mut self) -> Option<i64> {
         self.parse_intc()
     }
 
-    fn parse_top(&mut self) -> i64 {
+    fn parse_top(&mut self) -> Option<i64> {
         self.parse_intc()
     }
 
-    /// 解析整数字面量，失败时返回 0 作为容错默认值。
-    fn parse_intc(&mut self) -> i64 {
+    /// 解析整数字面量，失败时返回 None（错误已记录到 self.errors）。
+    fn parse_intc(&mut self) -> Option<i64> {
         match self.peek_kind() {
             TokenKind::IntConst(n) => {
                 let val = *n;
                 self.advance();
-                val
+                Some(val)
             }
             _ => {
                 let t = self.peek().clone();
@@ -293,7 +296,7 @@ impl<'a> RdParser<'a> {
                         col: t.col,
                     },
                 ));
-                0
+                None
             }
         }
     }
@@ -1074,21 +1077,18 @@ impl<'a> RdParser<'a> {
 
     fn parse_field_var(&mut self) -> Vec<Selector> {
         let mut result = Vec::new();
-        match self.peek_kind() {
-            TokenKind::Ident(name) => {
-                let n = name.clone();
-                self.advance();
-                let more = self.parse_field_var_more();
-                if more.is_empty() {
-                    result.push(Selector::Field(n));
-                } else {
-                    // FieldVarMore 返回下标表达式列表，每个生成一个 FieldSubscript
-                    for m in more {
-                        result.push(Selector::FieldSubscript(n.clone(), Box::new(m)));
-                    }
+        if let TokenKind::Ident(name) = self.peek_kind() {
+            let n = name.clone();
+            self.advance();
+            let more = self.parse_field_var_more();
+            if more.is_empty() {
+                result.push(Selector::Field(n));
+            } else {
+                // FieldVarMore 返回下标表达式列表，每个生成一个 FieldSubscript
+                for m in more {
+                    result.push(Selector::FieldSubscript(n.clone(), Box::new(m)));
                 }
             }
-            _ => {}
         }
         result
     }
@@ -1507,5 +1507,17 @@ mod tests {
         assert!(errors.is_empty());
         let prog = prog.expect("Expected a program");
         assert_eq!(prog.name, "myLongProgram123");
+    }
+
+    #[test]
+    fn test_missing_array_low_bound() {
+        let source = "program p var array[..5] of integer x; begin x := 1 end.";
+        let (_prog, errors) = parse(source);
+        assert!(!errors.is_empty(), "Should have syntax error for missing low bound");
+        let msg = errors[0].msg.clone();
+        assert!(
+            msg.contains("integer") || msg.contains("整"),
+            "Error should mention expected integer, got: {msg}"
+        );
     }
 }
