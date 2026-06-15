@@ -66,6 +66,16 @@ flowchart TD
 
 编译时会生成交互式 HTML 报告（`*_report.html`），包含 Token 列表、语法树浏览器和符号表的可视化展示，支持标签页切换、表格排序、全文搜索、语法树展开/折叠和匹配高亮。
 
+### AST 语法树颜色编码
+
+语法树节点根据语义类别使用不同颜色标识：
+
+| 颜色 | CSS 类 | 匹配节点 | 语义类别 |
+|------|--------|----------|----------|
+| <span style="color:#6b8fdb">█</span> 钢蓝 `#6b8fdb` | `.tn-decl` | `ProK` `PheadK` `VarK` `TypeK` `ProcDecK` `DecK` | 声明 |
+| <span style="color:#6ba87a">█</span> 翠绿 `#6ba87a` | `.tn-stmt` | `StmLk` `StmtK` | 语句 |
+| <span style="color:#d96c7e">█</span> 珊瑚 `#d96c7e` | `.tn-expr` | `ExpK` | 表达式 |
+
 ---
 
 ## 项目结构
