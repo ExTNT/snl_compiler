@@ -83,6 +83,12 @@ pub struct SymbolTable {
     scopes: Vec<HashMap<String, SymbolEntry>>,
 }
 
+impl Default for SymbolTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SymbolTable {
     /// 创建空的符号表（含全局作用域）。
     pub fn new() -> Self {

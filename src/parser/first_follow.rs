@@ -77,11 +77,10 @@ impl FirstFollow {
 
                         let existing = follow.get_mut(nt).unwrap();
                         for tk in &beta_first {
-                            if *tk != TokenKind::Eof {
-                                if existing.insert(tk.clone()) {
+                            if *tk != TokenKind::Eof
+                                && existing.insert(tk.clone()) {
                                     changed = true;
                                 }
-                            }
                         }
                         if need_lhs_follow {
                             for tk in lhs_follow {

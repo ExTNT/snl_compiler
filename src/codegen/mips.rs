@@ -213,6 +213,12 @@ pub struct MipsContext {
     errors: Vec<CompileError>,
 }
 
+impl Default for MipsContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MipsContext {
     pub fn new() -> Self {
         MipsContext {
@@ -638,7 +644,7 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
                 if let Some((offset, var_level)) = ctx.get_var_offset(&lhs.base) {
                     let is_char = ctx
                         .get_var_type(&lhs.base)
-                        .map_or(false, |t| matches!(t, CodegenType::Char));
+                        .is_some_and(|t| matches!(t, CodegenType::Char));
                     let store_typ = if is_char { &CodegenType::Char } else { &CodegenType::Integer };
                     emit_store(ctx, offset, var_level, &lhs.base, store_typ);
                 }
@@ -688,7 +694,7 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
         Stm::Read { var, .. } => {
             let is_char = ctx
                 .get_var_type(var)
-                .map_or(false, |t| matches!(t, CodegenType::Char));
+                .is_some_and(|t| matches!(t, CodegenType::Char));
             if is_char {
                 ctx.emit("  li $v0, 12             # read char syscall");
             } else {
@@ -785,7 +791,7 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
                 if let Some((offset, var_level)) = ctx.get_var_offset(&va.base) {
                     let is_char = ctx
                         .get_var_type(&va.base)
-                        .map_or(false, |t| matches!(t, CodegenType::Char));
+                        .is_some_and(|t| matches!(t, CodegenType::Char));
                     let load_typ = if is_char { &CodegenType::Char } else { &CodegenType::Integer };
                     emit_load(ctx, offset, var_level, &va.base, load_typ);
                     return if is_char {

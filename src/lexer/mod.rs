@@ -33,6 +33,12 @@ pub struct Lexer {
     errors: Vec<LexerError>,
 }
 
+impl Default for Lexer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Lexer {
     /// 创建新的词法分析器实例。
     pub fn new() -> Self {

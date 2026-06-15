@@ -29,7 +29,7 @@ impl DeclarePart {
         match &self.types {
             TypeDec::Empty => {}
             TypeDec::Defined(defs) => {
-                write!(f, "{}├── TypeK\n", prefix)?;
+                writeln!(f, "{}├── TypeK", prefix)?;
                 let child_prefix = format!("{}│   ", prefix);
                 for def in defs {
                     write!(f, "{}├── DecK  ", child_prefix)?;
@@ -41,7 +41,7 @@ impl DeclarePart {
         match &self.vars {
             VarDec::Empty => {}
             VarDec::Defined(defs) => {
-                write!(f, "{}├── VarK\n", prefix)?;
+                writeln!(f, "{}├── VarK", prefix)?;
                 let child_prefix = format!("{}│   ", prefix);
                 for def in defs {
                     write!(f, "{}├── DecK  ", child_prefix)?;
