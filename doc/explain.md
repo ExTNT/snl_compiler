@@ -247,20 +247,26 @@ pub enum TypeInfo {
 }
 ```
 
-### 3.3 类型别名解析（审计新增）
+### 3.3 类型别名解析（审计新增，含循环检测）
 
 ```rust
-// analyzer.rs - resolve_type 方法
-fn resolve_type(&self, ty: &TypeInfo) -> TypeInfo {
+// analyzer.rs - resolve_type 方法（已添加循环检测）
+fn resolve_type(&self, ty: &TypeInfo, visited: &mut Vec<String>) -> TypeInfo {
     match ty {
         TypeInfo::Named(name) => {
+            // 循环检测：防止 type A = B; type B = A 导致栈溢出
+            if visited.contains(name) {
+                self.error(SemanticErrCode::CircularTypeAlias,
+                    format!("Circular type alias '{}'", name), loc);
+                return ty.clone();
+            }
             match self.symbols.lookup(name) {
                 Some(entry) if entry.kind == IdKind::TypeId => {
                     if let Some(inner) = &entry.typ {
-                        if matches!(inner, TypeInfo::Named(_)) {
-                            return self.resolve_type(inner);
-                        }
-                        return inner.clone();
+                        visited.push(name.clone());
+                        let resolved = self.resolve_type(inner, visited);
+                        visited.pop();
+                        return resolved;
                     }
                 }
                 _ => {}
@@ -268,14 +274,14 @@ fn resolve_type(&self, ty: &TypeInfo) -> TypeInfo {
             ty.clone()
         }
         TypeInfo::Array(elem, low, high) => {
-            TypeInfo::Array(Box::new(self.resolve_type(elem)), *low, *high)
+            TypeInfo::Array(Box::new(self.resolve_type(elem, visited)), *low, *high)
         }
         _ => ty.clone(),
     }
 }
 ```
 
-在 `check_assign`、`check_exp`（二元运算）、`check_call`（过程调用实参）三处，调用 `types_compatible` 之前自动调用 `resolve_type()` 解析命名类型。
+在 `check_assign`、`check_exp`（二元运算）、`check_call`（过程调用实参）三处，调用 `types_compatible` 之前自动调用 `resolve_type()` 解析命名类型。为防止循环类型别名导致栈溢出，新增 `visited: &mut Vec<String>` 参数追踪解析链，检测到循环时报告 `CircularTypeAlias` 错误。
 
 ### 3.4 类型兼容性检查
 

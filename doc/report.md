@@ -420,13 +420,19 @@ impl SymbolTable {
     }
 }
 
-/// 类型别名递归解析
-fn resolve_type(&self, ty: &TypeInfo) -> TypeInfo {
+/// 类型别名递归解析（含循环检测）
+fn resolve_type(&self, ty: &TypeInfo, visited: &mut Vec<String>) -> TypeInfo {
     match ty {
         TypeInfo::Named(name) => {
+            if visited.contains(name) {
+                return ty.clone(); // 检测到循环，返回原始类型并记录错误
+            }
             if let Some(entry) = self.symbols.lookup(name) {
                 if let Some(inner) = &entry.typ {
-                    return self.resolve_type(inner);
+                    visited.push(name.clone());
+                    let resolved = self.resolve_type(inner, visited);
+                    visited.pop();
+                    return resolved;
                 }
             }
             ty.clone()

@@ -1,8 +1,8 @@
 # SNL 编译器 —— 代码审计与优化报告
 
-**日期**: 2026-05-28  
-**审计范围**: 全部 10 个源文件  
-**测试状态**: 122/122 通过  
+**日期**: 2026-06-15  
+**审计范围**: 全部源文件  
+**测试状态**: 137/137 通过  
 **生产构建**: 成功  
 
 ---
@@ -255,7 +255,7 @@
 
 | 验证项 | 结果 |
 |--------|------|
-| `cargo test` | **122/122 通过** |
+| `cargo test` | **137/137 通过** |
 | `cargo build --release` | **成功** |
 | 生产代码中 `panic!()` | **0 处**（全部在 `#[cfg(test)]` 中） |
 | 生产代码中 `.unwrap()` (裸) | **0 处** |
@@ -297,7 +297,7 @@
 
 | 验证项 | 结果 |
 |--------|------|
-| `cargo test` | **122/122 通过** |
+| `cargo test` | **137/137 通过** |
 | `cargo build --release` | **成功**（LL(1) 模块参与生产编译） |
 | 17 个样例 LL(1) 静默验证 | **全部通过** |
 | SPIM 输出正确性 | **hello→42, factorial→120** |
@@ -317,4 +317,67 @@
 1. **并行探索**: 6 个 explore agent 同时覆盖 lexer、parser、semantic、codegen、AST、main 六大模块
 2. **模式搜索**: `.clone()` (90 处)、`format!()` (85 处)、`.unwrap()` (23 处)、`panic!` (44 处) 等全局扫描
 3. **Oracle 评审**: 3 轮 Oracle 验证，发现并修复 4 个细微问题
-4. **测试驱动**: 每次修改后立即运行全部 122 个测试，确保零回归
+4. **测试驱动**: 每次修改后立即运行全部 137 个测试，确保零回归
+
+---
+
+## 补充修改：Oracle 全面评估修复（2026-06-15）
+
+### 背景
+
+通过 Oracle Agent 对全部源文件进行全面代码评估，发现 2 个 P0 关键缺陷和 3 个 P1/P2 改进项。
+
+### 26. 类型别名循环检测
+
+**文件**: `src/semantic/analyzer.rs:586`, `src/error.rs`
+
+**问题**: `resolve_type()` 递归解析类型别名链（`type A = B; type B = A`）时无循环检测，会导致栈溢出。代码生成（`mips.rs:101`）已有正确的循环检测，但语义分析阶段缺失此防护。
+
+**修复方案**: 为 `resolve_type()` 添加 `visited: &mut Vec<String>` 参数，在递归前检查当前名字是否已在 visited 中。若检测到循环，记录 `CircularTypeAlias` 语义错误并返回原始类型。所有 7 个外部调用点传入 `&mut Vec::new()` 初始化新的访问链。
+
+**新增测试**: `test_circular_type_alias` — 验证 `type A = B; type B = A` 产生循环错误而非栈溢出。
+
+### 27. parseIntc 静默返回 0
+
+**文件**: `src/parser/rd.rs:280`
+
+**问题**: `parse_intc()` 在解析失败时返回 `0`，导致数组边界 `array[..5]` 的缺失下界被静默设为 0。该值会进入 AST 并传递给代码生成，产生错误大小的数组分配。
+
+**修复方案**: 将返回类型从 `i64` 改为 `Option<i64>`。解析失败时返回 `None`，调用方（`parse_array_type`）回退为 `TypeBody::Base(BaseType::Integer)`。新增测试验证缺失边界的错误处理和解析器继续运行。
+
+### 28. 解析失败时生成 HTML 报告
+
+**文件**: `src/main.rs:83`
+
+**问题**: 词法错误和语义错误均会生成部分 HTML 报告，但解析失败时仅输出到 stderr 并退出。三种错误路径的用户体验不一致。
+
+**修复方案**: 在解析失败的 `process::exit(1)` 前添加 `format_report_html()` 调用，传入 `None` 作为 prog 和 scope_snapshots，报告显示"（语法分析未完成）"和"（语义分析未完成）"。
+
+### 29. 删除 escape_script 死代码
+
+**文件**: `src/main.rs:616`
+
+**问题**: `escape_script()` 函数标注了 `#[allow(dead_code)]`，从未被调用。HTML 报告的 JS 不使用用户数据注入，无需 `</script>` 转义。
+
+**修复方案**: 删除 `escape_script()` 函数及其 6 个关联测试。`escape_html()` 保持不变。
+
+### 30. Clippy 全面清理
+
+**文件**: `src/ast/display.rs`, `src/codegen/mips.rs`, `src/lexer/mod.rs`, `src/main.rs`, `src/parser/first_follow.rs`, `src/parser/rd.rs`, `src/semantic/analyzer.rs`, `src/semantic/symbol.rs`
+
+**问题**: 19 个 clippy 警告（`new_without_default`×4, `single_match`×4, `collapsible_if`×3, `unnecessary_map_or`×3, 等）。
+
+**修复方案**: `cargo clippy --fix` 自动修复 15 个，手动添加 4 个 `Default` impl（Lexer, MipsContext, SemanticAnalyzer, SymbolTable）。最终 0 警告。
+
+### 验证
+
+| 验证项 | 结果 |
+|--------|------|
+| `cargo test` | **137/137 通过** |
+| `cargo clippy` | **0 警告** |
+| `cargo build --release` | **成功** |
+| 循环类型检测 | `type A=B; type B=A` → CircularTypeAlias 错误 |
+| 缺失数组边界 | `array[..5]` → 语法错误，解析继续 |
+| 解析失败报告 | `_report.html` 已生成，含部分数据 |
+
+
