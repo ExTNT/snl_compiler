@@ -307,3 +307,237 @@ fn format_table_md(
 
     out
 }
+
+/// 生成 HTML 报告（存根，待实现）。
+///
+/// 返回空字符串，所有测试将失败（RED 阶段）。
+fn format_report_html(
+    input_path: &str,
+    tokens: &[snl_compiler::lexer::Token],
+    lex_errors: &[snl_compiler::lexer::LexerError],
+    prog: Option<&snl_compiler::ast::nodes::Program>,
+    syntax_errors: &[snl_compiler::error::CompileError],
+    scope_snapshots: Option<&[(usize, HashMap<String, SymbolEntry>)]>,
+    semantic_errors: &[snl_compiler::error::CompileError],
+) -> String {
+    String::new()
+}
+
+/// 对 HTML 进行转义。
+/// 将 `<`、`>`、`&`、`"` 分别替换为 `&lt;`、`&gt;`、`&amp;`、`&quot;`。
+fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// 对 JavaScript 字符串中的 `</script>` 进行转义。
+/// 将 `</script>`（不区分大小写）替换为 `<\/script>`，保留原始大小写。
+fn escape_script(s: &str) -> String {
+    let lower = s.to_ascii_lowercase();
+    let pattern = "</script>";
+    let mut out = String::with_capacity(s.len());
+    let mut start = 0;
+    while let Some(pos) = lower[start..].find(pattern) {
+        let abs_pos = start + pos;
+        out.push_str(&s[start..abs_pos]);
+        let matched = &s[abs_pos..abs_pos + pattern.len()];
+        out.push_str(&matched[0..1]);
+        out.push('\\');
+        out.push_str(&matched[1..]);
+        start = abs_pos + pattern.len();
+    }
+    out.push_str(&s[start..]);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_escape_html_plain_text() {
+        assert_eq!(escape_html("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_escape_html_lt_gt() {
+        assert_eq!(escape_html("<script>"), "&lt;script&gt;");
+    }
+
+    #[test]
+    fn test_escape_html_amp() {
+        assert_eq!(escape_html("a & b"), "a &amp; b");
+    }
+
+    #[test]
+    fn test_escape_html_quot() {
+        assert_eq!(escape_html("say \"hi\""), "say &quot;hi&quot;");
+    }
+
+    #[test]
+    fn test_escape_html_all_entities() {
+        assert_eq!(
+            escape_html("<a href=\"test&go\">"),
+            "&lt;a href=&quot;test&amp;go&quot;&gt;"
+        );
+    }
+
+    #[test]
+    fn test_escape_html_empty() {
+        assert_eq!(escape_html(""), "");
+    }
+
+    #[test]
+    fn test_escape_script_basic() {
+        assert_eq!(escape_script("x</script>y"), "x<\\/script>y");
+    }
+
+    #[test]
+    fn test_escape_script_uppercase() {
+        assert_eq!(escape_script("</SCRIPT>"), "<\\/SCRIPT>");
+    }
+
+    #[test]
+    fn test_escape_script_mixed_case() {
+        assert_eq!(escape_script("</Script>"), "<\\/Script>");
+    }
+
+    #[test]
+    fn test_escape_script_multiple() {
+        assert_eq!(
+            escape_script("a</script>b</script>c"),
+            "a<\\/script>b<\\/script>c"
+        );
+    }
+
+    #[test]
+    fn test_escape_script_empty() {
+        assert_eq!(escape_script(""), "");
+    }
+
+    #[test]
+    fn test_escape_script_no_match() {
+        assert_eq!(escape_script("hello world"), "hello world");
+    }
+
+    // ---- HTML report tests (RED phase — stub returns empty) ----
+
+    use snl_compiler::lexer::{LexerError, Token, TokenKind};
+
+    fn sample_tokens() -> Vec<Token> {
+        vec![
+            Token {
+                kind: TokenKind::Ident("x".into()),
+                line: 1,
+                col: 1,
+            },
+            Token {
+                kind: TokenKind::Assign,
+                line: 1,
+                col: 3,
+            },
+            Token {
+                kind: TokenKind::IntConst(42),
+                line: 1,
+                col: 6,
+            },
+        ]
+    }
+
+    fn sample_errors() -> Vec<LexerError> {
+        vec![LexerError {
+            msg: "Unterminated comment".into(),
+            line: 3,
+            col: 1,
+        }]
+    }
+
+    #[test]
+    fn test_html_has_doctype_and_charset() {
+        let tokens = sample_tokens();
+        let errors = sample_errors();
+        let html = format_report_html("test.snl", &tokens, &errors, None, &[], None, &[]);
+        assert!(
+            html.starts_with("<!DOCTYPE html>"),
+            "HTML should start with <!DOCTYPE html>"
+        );
+        assert!(
+            html.contains("<meta charset=\"UTF-8\">"),
+            "HTML should contain <meta charset=\"UTF-8\">"
+        );
+    }
+
+    #[test]
+    fn test_html_tab_structure() {
+        let tokens = sample_tokens();
+        let html = format_report_html("test.snl", &tokens, &[], None, &[], None, &[]);
+        assert!(html.contains("id=\"tab-token\""), "Should have tab-token");
+        assert!(html.contains("id=\"tab-tree\""), "Should have tab-tree");
+        assert!(html.contains("id=\"tab-table\""), "Should have tab-table");
+    }
+
+    #[test]
+    fn test_html_tab_switching_js() {
+        let tokens = sample_tokens();
+        let html = format_report_html("test.snl", &tokens, &[], None, &[], None, &[]);
+        assert!(
+            html.contains("showTab"),
+            "JavaScript should define showTab function"
+        );
+    }
+
+    #[test]
+    fn test_html_token_table_content() {
+        let tokens = sample_tokens();
+        let html = format_report_html("test.snl", &tokens, &[], None, &[], None, &[]);
+        assert!(html.contains("<tr>"), "Should contain table rows");
+        assert!(html.contains("Ident"), "Should contain token kind Ident");
+        assert!(
+            html.contains("IntConst"),
+            "Should contain token kind IntConst"
+        );
+    }
+
+    #[test]
+    fn test_html_entity_escaping() {
+        let tokens = vec![Token {
+            kind: TokenKind::Ident("<test>".into()),
+            line: 1,
+            col: 1,
+        }];
+        let html = format_report_html("test.snl", &tokens, &[], None, &[], None, &[]);
+        assert!(
+            html.contains("&lt;test&gt;"),
+            "HTML entities should escape < > to &lt; &gt;"
+        );
+        assert!(
+            !html.contains("<test>"),
+            "Raw angle brackets should not appear in HTML"
+        );
+    }
+
+    #[test]
+    fn test_html_error_section() {
+        let errors = sample_errors();
+        let html_with = format_report_html("test.snl", &[], &errors, None, &[], None, &[]);
+        assert!(
+            html_with.contains("<td>"),
+            "Error table should have cells when errors exist"
+        );
+
+        let html_without = format_report_html("test.snl", &[], &[], None, &[], None, &[]);
+        assert!(
+            html_without.contains("无"),
+            "Should show 无 when no errors"
+        );
+    }
+}
