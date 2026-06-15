@@ -21,8 +21,8 @@
 
 ### 验证结果
 
-- **122 个单元测试**全部通过（词法分析 25 个、语法分析 42 个、语义分析 20 个、代码生成 35 个）
-- **17 个样例程序**全部编译通过，MIPS 汇编代码在 SPIM 模拟器上验证运行正确
+- **139 个单元测试**全部通过（词法分析 25 个、语法分析 43 个、语义分析 22 个、代码生成 35 个、HTML 报告 14 个）
+- **17 个样例程序**全部批量编译通过，生成对应 MIPS 汇编和 HTML 诊断报告
 - 经历全面代码审计，发现 120+ 个问题，修复 22 个关键问题
 
 ---
@@ -185,6 +185,9 @@ cargo run -- samples/hello.snl
 # 指定输出文件
 cargo run -- samples/factorial.snl -o output.asm
 
+# 批量编译 samples/ 下全部样例
+for f in samples/*.snl; do cargo run -- "$f"; done
+
 # 运行生成的 MIPS 汇编
 spim -file samples/hello.asm
 ```
@@ -195,7 +198,7 @@ spim -file samples/hello.asm
 
 | 输出文件 | 内容说明 |
 |---------|---------|
-| `*_report.html` | 自包含 HTML 报告（含 Token 序列、AST、符号表、错误信息；标签页切换、可折叠 AST、可排序表格、全文搜索） |
+| `*_report.html` | 自包含 HTML 报告（含 Token 序列、语法树浏览器、符号表、错误信息；标签页切换、树节点展开/折叠、匹配过滤与高亮、可排序表格、全文搜索） |
 | `*.asm` | MIPS 汇编代码（.data + .text 段），可直接在 SPIM 运行 |
 
 ### 编译成功示例

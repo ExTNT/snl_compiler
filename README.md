@@ -64,7 +64,7 @@ flowchart TD
     SEM -.-> REPORT
 ```
 
-编译时会生成交互式 HTML 报告（`*_report.html`），包含 Token 列表、语法树和符号表的可视化展示，支持标签页切换、表格排序和搜索功能。
+编译时会生成交互式 HTML 报告（`*_report.html`），包含 Token 列表、语法树浏览器和符号表的可视化展示，支持标签页切换、表格排序、全文搜索、语法树展开/折叠和匹配高亮。
 
 ---
 
@@ -139,7 +139,7 @@ snl_compiler/
 ```bash
 cargo build              # debug 模式
 cargo build --release    # release 模式
-cargo test               # 全部 122 个测试
+cargo test               # 全部 139 个测试
 ```
 
 ### 编译 SNL 程序
@@ -150,6 +150,9 @@ cargo run -- samples/hello.snl
 
 # 指定输出文件名
 cargo run -- samples/factorial.snl -o output.asm
+
+# 批量编译 samples/ 下所有 SNL 样例
+for f in samples/*.snl; do cargo run -- "$f"; done
 ```
 
 ### 运行生成的 MIPS 代码
@@ -162,10 +165,11 @@ spim -file samples/hello.asm
 ### 分模块测试
 
 ```bash
-cargo test lexer       # 词法分析 (28 个用例)
-cargo test parser      # 语法分析 (35 个用例)
+cargo test lexer       # 词法分析 (25 个用例)
+cargo test parser      # 语法分析 (43 个用例)
 cargo test semantic    # 语义分析 (22 个用例)
-cargo test codegen     # 代码生成 (37 个用例)
+cargo test codegen     # 代码生成 (35 个用例)
+cargo test --bin snl_compiler  # HTML 报告/入口 (14 个用例)
 ```
 
 ---
@@ -235,6 +239,6 @@ Warning: LL(1) verification failed (RD parse succeeded)
 | **安全性** | 3 | 尾递归→循环、panic→CompileError、unwrap→expect |
 | **代码质量** | 5 | Option 返回类型、Display/Error 实现、ID 列表去重、LL(1) 恢复 |
 
-全部 17 个样例程序通过 SPIM 验证，122 个测试通过。
+全部 17 个样例程序已批量编译通过，139 个测试通过。
 
 详细报告：**`审计文档.md`**。

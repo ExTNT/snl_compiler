@@ -223,12 +223,20 @@ fn format_report_html(
     h.push_str("tr:hover td{background:#f8fafc}\n");
     h.push_str(".scope-label{font-weight:600;color:#0f172a;margin-top:24px;font-size:15px}\n");
     h.push_str(".scope-desc{margin:8px 0;color:#64748b;line-height:1.7}\n");
+    h.push_str(".tree-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px}\n");
+    h.push_str(".tree-toolbar input[type=text]{width:260px;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;outline:none}\n");
+    h.push_str(".tree-toolbar input[type=text]:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}\n");
+    h.push_str(".tree-toolbar button{padding:6px 10px;border:1px solid #d1d5db;background:#fff;color:#334155;border-radius:6px;font-size:13px;cursor:pointer}\n");
+    h.push_str(".tree-toolbar button:hover{background:#f1f5f9}\n");
+    h.push_str(".tree-toolbar label{display:flex;align-items:center;gap:4px;color:#64748b;font-size:13px}\n");
+    h.push_str(".tree-scroll{max-width:100%;overflow-x:auto;overflow-y:hidden;padding-bottom:8px}\n");
     h.push_str(".tree-node{margin:0;border-left:3px solid transparent;transition:border-color .15s}\n");
     h.push_str(".tree-node[open]{margin-bottom:2px}\n");
-    h.push_str(".tree-node summary{cursor:pointer;font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:13px;white-space:pre;padding:3px 8px;border-radius:4px;transition:background .1s}\n");
+    h.push_str(".tree-node summary{cursor:pointer;font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:13px;white-space:pre;padding:3px 8px;border-radius:4px;transition:background .1s;overflow:hidden;text-overflow:ellipsis}\n");
     h.push_str(".tree-node summary:hover{background:#f1f5f9}\n");
     h.push_str(".tree-node div{padding-left:20px}\n");
-    h.push_str(".tree-text{font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:13px;white-space:pre;padding:2px 8px;color:#64748b}\n");
+    h.push_str(".tree-text{font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:13px;white-space:pre;padding:2px 8px;color:#64748b;overflow:hidden;text-overflow:ellipsis}\n");
+    h.push_str(".tree-node.tree-match>summary,.tree-text.tree-match{background:#fef3c7;color:#92400e}\n");
     h.push_str("/* Syntax tree color coding */\n");
     h.push_str(".tn-decl{border-left-color:#3b82f6!important}.tn-decl summary{color:#1e40af}\n");
     h.push_str(".tn-stmt{border-left-color:#10b981!important}.tn-stmt summary{color:#065f46}\n");
@@ -267,10 +275,38 @@ fn format_report_html(
     h.push_str("table.dataset.sortAsc=asc?'false':'true';\n");
     h.push_str("}\n");
     h.push_str("function filterTables(query){\n");
+    h.push_str("filterTree(query);\n");
     h.push_str("var q=query.toLowerCase();\n");
     h.push_str("document.querySelectorAll('.tab-content[style*=\"block\"] table tbody tr').forEach(function(r){\n");
     h.push_str("if(!q){r.style.display='';return;}\n");
     h.push_str("r.style.display=r.textContent.toLowerCase().indexOf(q)>=0?'':'none';\n");
+    h.push_str("});\n");
+    h.push_str("}\n");
+    h.push_str("function setTreeOpen(open){\n");
+    h.push_str("document.querySelectorAll('#tree-browser details.tree-node').forEach(function(d){d.open=open});\n");
+    h.push_str("}\n");
+    h.push_str("function filterTree(query){\n");
+    h.push_str("var root=document.getElementById('tree-browser');\n");
+    h.push_str("if(!root)return;\n");
+    h.push_str("var q=(query||'').toLowerCase();\n");
+    h.push_str("var only=document.getElementById('tree-only-matches');\n");
+    h.push_str("var onlyMatches=only&&only.checked;\n");
+    h.push_str("var items=root.querySelectorAll('.tree-node,.tree-text');\n");
+    h.push_str("items.forEach(function(item){item.classList.remove('tree-match');item.style.display=''});\n");
+    h.push_str("if(!q)return;\n");
+    h.push_str("items.forEach(function(item){\n");
+    h.push_str("var text=(item.dataset.treeText||item.textContent||'').toLowerCase();\n");
+    h.push_str("if(text.indexOf(q)>=0){\n");
+    h.push_str("item.classList.add('tree-match');\n");
+    h.push_str("var parent=item.closest('details.tree-node');\n");
+    h.push_str("while(parent){parent.open=true;parent=parent.parentElement.closest('details.tree-node')}\n");
+    h.push_str("}\n");
+    h.push_str("});\n");
+    h.push_str("if(!onlyMatches)return;\n");
+    h.push_str("root.querySelectorAll('.tree-text').forEach(function(t){if(!t.classList.contains('tree-match'))t.style.display='none'});\n");
+    h.push_str("root.querySelectorAll('details.tree-node').forEach(function(d){\n");
+    h.push_str("var keep=d.classList.contains('tree-match')||d.querySelector('.tree-match');\n");
+    h.push_str("d.style.display=keep?'':'none';\n");
     h.push_str("});\n");
     h.push_str("}\n");
     h.push_str("</script>\n");
@@ -357,6 +393,12 @@ fn format_report_html(
         }
         Some(p) => {
             h.push_str("<h2>抽象语法树</h2>\n");
+            h.push_str("<div class=\"tree-toolbar\">\n");
+            h.push_str("<input id=\"tree-search\" type=\"text\" placeholder=\"搜索语法树...\" oninput=\"filterTree(this.value)\">\n");
+            h.push_str("<button type=\"button\" onclick=\"setTreeOpen(true)\">全部展开</button>\n");
+            h.push_str("<button type=\"button\" onclick=\"setTreeOpen(false)\">全部折叠</button>\n");
+            h.push_str("<label><input id=\"tree-only-matches\" type=\"checkbox\" onchange=\"filterTree(document.getElementById('tree-search').value)\">只显示匹配项</label>\n");
+            h.push_str("</div>\n");
 
             // 将 AST 渲染为树形文本，然后解析为 HTML
             let tree_text = format!("{}", p);
@@ -373,6 +415,8 @@ fn format_report_html(
                 (n, rest)
             }
 
+            h.push_str("<div class=\"tree-scroll\">\n");
+            h.push_str("<div id=\"tree-browser\">\n");
             for line in tree_text.lines() {
                 if line.is_empty() {
                     continue;
@@ -393,9 +437,13 @@ fn format_report_html(
                     let content = content.trim();
                     // 哨兵行 └── .
                     if content == "." {
+                        let escaped_content = escape_html(content);
                         h.push_str(&format!(
-                            "<div class=\"tree-text\" style=\"padding-left:{}px\">.</div>\n",
-                            depth * 20
+                            "<div class=\"tree-text\" data-tree-text=\"{}\" title=\"{}\" style=\"padding-left:{}px\">{}</div>\n",
+                            escaped_content,
+                            escaped_content,
+                            depth * 20,
+                            escaped_content
                         ));
                         continue;
                     }
@@ -403,27 +451,36 @@ fn format_report_html(
                     let is_binary_child = content.starts_with("ExpK")
                         && (content.contains("Op  ") || content.contains("Const  "));
                     if is_binary_child {
+                        let escaped_content = escape_html(content);
                         h.push_str(&format!(
-                            "<div class=\"tree-text\" style=\"padding-left:{}px\">{}</div>\n",
+                            "<div class=\"tree-text\" data-tree-text=\"{}\" title=\"{}\" style=\"padding-left:{}px\">{}</div>\n",
+                            escaped_content,
+                            escaped_content,
                             depth * 20,
-                            escape_html(content)
+                            escaped_content
                         ));
                     } else {
                         let _ = is_last; // suppress unused warning
                         let type_class = node_type_class(content);
+                        let escaped_content = escape_html(content);
                         h.push_str(&format!(
-                            "<div class=\"tree-guide\" style=\"padding-left:{}px\"><details class=\"tree-node {}\" open><summary>{}</summary>\n",
+                            "<div class=\"tree-guide\" style=\"padding-left:{}px\"><details class=\"tree-node {}\" data-tree-text=\"{}\" open><summary title=\"{}\">{}</summary>\n",
                             depth * 20,
                             type_class,
-                            escape_html(content)
+                            escaped_content,
+                            escaped_content,
+                            escaped_content
                         ));
                     }
                 } else {
                     // 普通行：按缩进深度定位
+                    let escaped_rest = escape_html(rest);
                     h.push_str(&format!(
-                        "<div class=\"tree-text\" style=\"padding-left:{}px\">{}</div>\n",
+                        "<div class=\"tree-text\" data-tree-text=\"{}\" title=\"{}\" style=\"padding-left:{}px\">{}</div>\n",
+                        escaped_rest,
+                        escaped_rest,
                         depth * 20,
-                        escape_html(rest)
+                        escaped_rest
                     ));
                 }
             }
@@ -450,6 +507,8 @@ fn format_report_html(
             for _ in 0..details_count {
                 h.push_str("</details></div>\n");
             }
+            h.push_str("</div>\n");
+            h.push_str("</div>\n");
 
             h.push_str("<br>\n");
 
@@ -662,6 +721,7 @@ mod tests {
 
     // ---- HTML report tests (RED phase — stub returns empty) ----
 
+    use snl_compiler::ast::nodes::{DeclarePart, Loc, ProcDec, Program, StmList, TypeDec, VarDec};
     use snl_compiler::lexer::{LexerError, Token, TokenKind};
 
     fn sample_tokens() -> Vec<Token> {
@@ -692,6 +752,23 @@ mod tests {
         }]
     }
 
+    fn sample_program() -> Program {
+        let loc = Loc { line: 1, col: 1 };
+        Program {
+            name: "very_long_program_name_for_tree_width_regression".into(),
+            decl: DeclarePart {
+                types: TypeDec::Empty,
+                vars: VarDec::Empty,
+                procs: ProcDec::Empty,
+            },
+            body: StmList {
+                stmts: Vec::new(),
+                loc,
+            },
+            loc,
+        }
+    }
+
     #[test]
     fn test_html_has_doctype_and_charset() {
         let tokens = sample_tokens();
@@ -714,6 +791,52 @@ mod tests {
         assert!(html.contains("id=\"tab-token\""), "Should have tab-token");
         assert!(html.contains("id=\"tab-tree\""), "Should have tab-tree");
         assert!(html.contains("id=\"tab-table\""), "Should have tab-table");
+    }
+
+    #[test]
+    fn test_html_tree_has_horizontal_scroll_container() {
+        let program = sample_program();
+        let html = format_report_html("test.snl", &[], &[], Some(&program), &[], None, &[]);
+
+        assert!(
+            html.contains(".tree-scroll{max-width:100%;overflow-x:auto;"),
+            "Tree CSS should constrain width and enable horizontal scrolling"
+        );
+        assert!(
+            html.contains("<div class=\"tree-scroll\">"),
+            "Rendered AST should be wrapped in the scroll container"
+        );
+    }
+
+    #[test]
+    fn test_html_tree_browser_controls_and_search_hooks() {
+        let program = sample_program();
+        let html = format_report_html("test.snl", &[], &[], Some(&program), &[], None, &[]);
+
+        assert!(
+            html.contains("id=\"tree-search\""),
+            "Tree browser should include a tree search input"
+        );
+        assert!(
+            html.contains("id=\"tree-only-matches\""),
+            "Tree browser should include a match-only toggle"
+        );
+        assert!(
+            html.contains("function setTreeOpen"),
+            "Tree browser should include expand/collapse controls"
+        );
+        assert!(
+            html.contains("function filterTree"),
+            "Tree browser should include tree filtering"
+        );
+        assert!(
+            html.contains(".tree-node.tree-match>summary,.tree-text.tree-match"),
+            "Tree browser should highlight matching nodes"
+        );
+        assert!(
+            html.contains("data-tree-text=\"ProK\""),
+            "Rendered tree nodes should carry searchable text"
+        );
     }
 
     #[test]

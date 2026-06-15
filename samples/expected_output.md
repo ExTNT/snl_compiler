@@ -187,8 +187,11 @@
 ## 运行方式
 
 ```bash
-# 编译
+# 编译单个样例，生成 samples/<程序名>.asm 和 samples/<程序名>_report.html
 cargo run -- samples/<程序名>.snl
+
+# 批量编译 samples/ 下全部 17 个样例
+for f in samples/*.snl; do cargo run -- "$f"; done
 
 # 在 SPIM 中运行
 spim -file samples/<程序名>.asm
