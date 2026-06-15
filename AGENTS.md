@@ -68,11 +68,11 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-06-15 | **Commit:** 28bd527 | **Branch:** main
+**Generated:** 2026-06-15 | **Commit:** 8ed3892 | **Branch:** main
 
 ## OVERVIEW
 
-SNL (Small Nested Language) → MIPS I assembly compiler. Rust, edition 2024, zero dependencies. 4-phase pipeline: lexer → parser (recursive descent + LL(1) verify) → semantic → codegen. 122 tests, 17 verified samples.
+SNL (Small Nested Language) → MIPS I assembly compiler. Rust, edition 2024, zero dependencies. 4-phase pipeline: lexer → parser (recursive descent + LL(1) verify) → semantic → codegen. 139 tests, 17 verified samples.
 
 ## STRUCTURE
 
@@ -81,11 +81,12 @@ src/
 ├── main.rs      # CLI, 4-phase pipeline, Markdown output (*_token.md, *_tree.md, *_table.md)
 ├── lib.rs       # Module re-exports: ast, codegen, error, lexer, parser, semantic
 ├── error.rs     # CompileError + ErrorKind + SemanticErrCode — unified across all phases
+├── report.rs    # Self-contained HTML diagnostic report (binary-only, not in lib.rs)
 ├── lexer/       # DFA tokenization (private: dfa, keyword; public: token)
 ├── ast/         # Shared AST nodes (Program, Stm, Exp...) + tree-format Display
 ├── parser/      # Recursive descent (primary, builds AST) + LL(1) table-driven (verification)
 ├── semantic/    # Two-pass: symbol table → type check (12 error types)
-└── codegen/     # MIPS I emission, single mips.rs (1135 lines)
+└── codegen/     # MIPS I emission, single mips.rs (1141 lines)
 samples/         # 17 SNL programs + generated .asm / _token.md / _tree.md / _table.md
 doc/             # SNL spec, audit report, technical docs
 ```
@@ -104,6 +105,7 @@ doc/             # SNL spec, audit report, technical docs
 | Add error code | `src/error.rs` | SemanticErrCode or ErrorKind variant |
 | Add MIPS instruction | `src/codegen/mips.rs` | compile_stm / compile_exp / helpers |
 | Change error exit policy | `src/main.rs` | Per-stage fatal/continue logic |
+| Add HTML report feature | `src/report.rs` | format_report_html(), self-contained CSS/JS |
 
 ## CODE MAP
 
@@ -119,10 +121,11 @@ doc/             # SNL spec, audit report, technical docs
 | `SemanticErrCode` | enum | `error.rs:11` | 12 typed semantic error variants |
 | `SymbolTable` | struct | `semantic/symbol.rs:82` | Nested-scope HashMap stack |
 | `Loc` | struct | `ast/nodes.rs:17` | 1-indexed {line, col}, shared by everything |
+| `format_report_html()` | function | `report.rs:8` | Self-contained HTML diagnostic report (pub(crate)) |
 
 ## CONVENTIONS
 
-- **Tests**: Inline `#[cfg(test)] mod tests` at bottom of source files. No `tests/` dir. 137 total (lexer=28, parser=36, semantic=24, codegen=37, main=12).
+- **Tests**: Inline `#[cfg(test)] mod tests` at bottom of source files. No `tests/` dir. 139 total (lexer=25, parser=43, semantic=22, codegen=35, report=14).
 - **Error accumulation**: All phases collect errors in internal `Vec`, never abort mid-phase. `main.rs` decides exit policy per stage.
 - **Lexer is isolated**: Uses local `LexerError`, not `CompileError`. Only module with private child modules.
 - **Two parsers**: RD builds AST (authoritative). LL(1) verifies grammar (warning-only on parse mismatch).
@@ -144,17 +147,21 @@ doc/             # SNL spec, audit report, technical docs
 - **`resolve_type()` without cycle detection** — circular type aliases (e.g., `type A = B; type B = A`) cause stack overflow. Use `visited: &mut Vec<String>` parameter pattern from `codegen/mips.rs:101`.
 - **`parse_intc()` returns 0 on failure** — silently allows wrong array bounds into AST. Return `Option<i64>`, propagate `None` upward.
 - **Silent defaults in codegen** — `emit_var_address` falls back to `(0, 0)` for unknown variables. Check `ctx.errors` growth after fallback.
+- **`unwrap()` in production code** — 6 remain: `symbol.rs:119,140`, `analyzer.rs:61`, `first_follow.rs:39,47,78`. Use `.expect("why")`.
+- **`let _ = compile_exp(...)`** — discards CodegenType return in `codegen/mips.rs` (6 sites: lines 676, 688, 723, 728, 751, 754). Acceptable today but masks future type-dependent codegen.
+- **Zero-location `Loc { line: 0, col: 0 }` fallbacks in semantic** — 5 sites in `analyzer.rs`. Produces confusing error output. Use actual source position.
+- **`args[3].clone()` without explicit bounds check** — `main.rs:34` relies on prior `args.len() >= 4` check. Fragile to index-logic changes. Use `args.get(3)` or destructure.
 
 ## COMMANDS
 
 ```bash
 cargo build              # debug
 cargo build --release    # release
-cargo test               # all 137 tests
-cargo test lexer         # 28 tests
-cargo test parser        # 35 tests (rd + ll1 + first_follow)
+cargo test               # all 139 tests
+cargo test lexer         # 25 tests
+cargo test parser        # 43 tests (rd + ll1 + first_follow)
 cargo test semantic      # 22 tests
-cargo test codegen       # 37 tests
+cargo test codegen       # 35 tests
 cargo run -- samples/hello.snl                # → hello.asm
 cargo run -- samples/hello.snl -o out.asm     # custom output
 ```
