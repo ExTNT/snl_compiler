@@ -1,0 +1,29 @@
+program slidingwindow
+    var array[0..7] of integer a;
+        integer n; integer k;
+        integer i; integer winsum; integer maxsum;
+begin
+    a[0] := 2; a[1] := 5; a[2] := 1; a[3] := 3;
+    a[4] := 7; a[5] := 2; a[6] := 8; a[7] := 4;
+    n := 8;
+    k := 3;
+    winsum := 0;
+    i := 0;
+    while i < k do
+        winsum := winsum + a[i];
+        i := i + 1
+    endwh;
+    maxsum := winsum;
+    i := k;
+    while i < n do
+        winsum := winsum + a[i];
+        winsum := winsum - a[i - k];
+        if maxsum < winsum then
+            maxsum := winsum
+        else
+            winsum := winsum
+        fi;
+        i := i + 1
+    endwh;
+    write(maxsum)
+end.

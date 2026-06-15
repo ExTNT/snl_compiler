@@ -87,7 +87,7 @@ snl_compiler/
 ├── PROGRAM_FLOW.md          # 程序流程详细说明
 ├── explain.md               # 关键技术详解
 ├── 审计文档.md              # 代码审计与优化报告
-├── samples/                 # 17 个 SNL 示例程序
+├── samples/                 # 25 个 SNL 示例程序
 │   ├── hello.snl
 │   ├── arithmetic.snl
 │   ├── control.snl
@@ -105,6 +105,14 @@ snl_compiler/
 │   ├── bubble.snl
 │   ├── selection.snl
 │   ├── insertion.snl
+│   ├── linearsearch.snl
+│   ├── binarysearch.snl
+│   ├── mergesort.snl
+│   ├── maxsubarray.snl
+│   ├── slidingwindow.snl
+│   ├── greedycoin.snl
+│   ├── dpcoin.snl
+│   ├── dpknapsack.snl
 │   └── expected_output.md
 └── src/
     ├── main.rs              # 程序入口，命令行接口
@@ -206,6 +214,14 @@ cargo test --bin snl_compiler  # HTML 报告/入口 (14 个用例)
 | 排序 | `bubble.snl` | `12` `22` `25` `34` `64` | 冒泡排序 |
 | 排序 | `selection.snl` | `12` `22` `25` `34` `64` | 选择排序 |
 | 排序 | `insertion.snl` | `12` `22` `25` `34` `64` | 插入排序 |
+| 查找 | `linearsearch.snl` | `5` `5` | 线性查找，输出目标值和索引 |
+| 查找 | `binarysearch.snl` | `38` `6` | 二分查找，输出目标值和索引 |
+| 排序 | `mergesort.snl` | `1` `3` `9` `10` `27` `38` `43` `82` | 递归归并排序 |
+| 扫描 | `maxsubarray.snl` | `4` | 最长连续递增子数组长度 |
+| 滑动窗口 | `slidingwindow.snl` | `17` | 大小为 k=3 的最大子数组和 |
+| 贪心 | `greedycoin.snl` | `10` `3` `5` `1` `2` `1` `1` `0` `0` | 贪心硬币找零 (面额 数量对，末位余额) |
+| 动态规划 | `dpcoin.snl` | `15` `3` | DP 最少硬币找零 (凑 15，最少 3 枚) |
+| 动态规划 | `dpknapsack.snl` | `10` `15` | DP 0/1 背包 (容量 10，最大价值 15) |
 
 ---
 
@@ -250,6 +266,6 @@ Warning: LL(1) verification failed (RD parse succeeded)
 | **安全性** | 3 | 尾递归→循环、panic→CompileError、unwrap→expect |
 | **代码质量** | 5 | Option 返回类型、Display/Error 实现、ID 列表去重、LL(1) 恢复 |
 
-全部 17 个样例程序已批量编译通过，139 个测试通过。
+全部 25 个样例程序已批量编译通过，139 个测试通过。
 
 详细报告：**`审计文档.md`**。

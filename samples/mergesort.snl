@@ -1,0 +1,59 @@
+program mergesort
+    var array[0..7] of integer a;
+        array[0..7] of integer tmp;
+        integer n;
+    procedure merge(integer lo; integer mid; integer hi);
+        var integer i; integer j; integer k;
+    begin
+        i := lo;
+        j := mid + 1;
+        k := lo;
+        while k < hi + 1 do
+            if mid < i then
+                tmp[k] := a[j];
+                j := j + 1
+            else
+                if hi < j then
+                    tmp[k] := a[i];
+                    i := i + 1
+                else
+                    if a[i] < a[j] then
+                        tmp[k] := a[i];
+                        i := i + 1
+                    else
+                        tmp[k] := a[j];
+                        j := j + 1
+                    fi
+                fi
+            fi;
+            k := k + 1
+        endwh;
+        k := lo;
+        while k < hi + 1 do
+            a[k] := tmp[k];
+            k := k + 1
+        endwh
+    end
+    procedure msort(integer lo; integer hi);
+        var integer mid;
+    begin
+        if lo < hi then
+            mid := (lo + hi) / 2;
+            msort(lo, mid);
+            msort(mid + 1, hi);
+            merge(lo, mid, hi)
+        else
+            mid := 0
+        fi
+    end
+begin
+    a[0] := 38; a[1] := 27; a[2] := 43; a[3] := 3;
+    a[4] := 9; a[5] := 82; a[6] := 10; a[7] := 1;
+    n := 8;
+    msort(0, n - 1);
+    n := 0;
+    while n < 8 do
+        write(a[n]);
+        n := n + 1
+    endwh
+end.

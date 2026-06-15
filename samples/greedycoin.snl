@@ -1,0 +1,27 @@
+program greedycoin
+    var array[0..3] of integer coins;
+        array[0..3] of integer count;
+        integer amount; integer m; integer rem;
+        integer i;
+begin
+    coins[0] := 10; coins[1] := 5; coins[2] := 2; coins[3] := 1;
+    amount := 37;
+    m := 4;
+    rem := amount;
+    i := 0;
+    while i < m do
+        count[i] := 0;
+        while coins[i] < rem + 1 do
+            count[i] := count[i] + 1;
+            rem := rem - coins[i]
+        endwh;
+        i := i + 1
+    endwh;
+    i := 0;
+    while i < m do
+        write(coins[i]);
+        write(count[i]);
+        i := i + 1
+    endwh;
+    write(rem)
+end.

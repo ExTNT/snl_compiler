@@ -300,7 +300,8 @@
 | `cargo test` | **139/139 通过** |
 | `cargo build --release` | **成功**（LL(1) 模块参与生产编译） |
 | 17 个样例 LL(1) 静默验证 | **全部通过** |
-| SPIM 输出正确性 | **hello→42, factorial→120** |
+| 后续扩展至 25 个样例（2026-06） | **全部通过**（新增 8 个算法样例：查找、排序、滑动窗口、贪心、动态规划） |
+| SPIM 输出正确性 | **全部 25 个样例通过**（hello→42, factorial→120, binarysearch→38/6, dpknapsack→10/15, ...） |
 | Oracle 验证（3 轮） | **VERIFIED** ✅ |
 
 ### 设计理由

@@ -1,0 +1,52 @@
+program binarysearch
+    var array[0..9] of integer a;
+        integer target; integer lo; integer hi; integer mid;
+        integer found; integer result;
+begin
+    a[0] := 2; a[1] := 5; a[2] := 8; a[3] := 12; a[4] := 16;
+    a[5] := 23; a[6] := 38; a[7] := 45; a[8] := 56; a[9] := 67;
+    target := 38;
+    lo := 0;
+    hi := 9;
+    found := 0;
+    result := 0;
+    while found = 0 do
+        if lo < hi then
+            mid := (lo + hi) / 2;
+            if a[mid] < target then
+                lo := mid + 1
+            else
+                lo := lo
+            fi;
+            if target < a[mid] then
+                hi := mid - 1
+            else
+                hi := hi
+            fi;
+            if a[mid] = target then
+                found := 1;
+                result := mid
+            else
+                result := result
+            fi
+        else
+            if a[lo] = target then
+                found := 1;
+                result := lo
+            else
+                found := 2
+            fi
+        fi;
+        if hi < lo then
+            found := 2
+        else
+            found := found
+        fi
+    endwh;
+    if found = 1 then
+        write(target);
+        write(result)
+    else
+        result := 0
+    fi
+end.
