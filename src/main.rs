@@ -80,6 +80,19 @@ fn main() {
             for err in parser.errors() {
                 eprintln!("  Line {}:{} — {}", err.loc.line, err.loc.col, err.msg);
             }
+            let syntax_errors: Vec<_> = parser.errors().to_vec();
+            let html = format_report_html(
+                input_path,
+                &saved_tokens,
+                &saved_lex_errors,
+                None,
+                &syntax_errors,
+                None,
+                &[],
+            );
+            fs::write(format!("{}_report.html", base_name), &html).unwrap_or_else(|e| {
+                eprintln!("Warning: could not write report: {}", e);
+            });
             process::exit(1);
         }
     };
@@ -513,7 +526,7 @@ fn format_report_html(
                     }
                     h.push_str("</td><td>");
                     if !entry.params.is_empty() {
-                        h.push_str("(");
+                        h.push('(');
                         for (j, p) in entry.params.iter().enumerate() {
                             if j > 0 {
                                 h.push_str(", ");
@@ -525,7 +538,7 @@ fn format_report_html(
                             h.push_str(": ");
                             h.push_str(&escape_html(&format!("{}", p.typ)));
                         }
-                        h.push_str(")");
+                        h.push(')');
                     }
                     h.push_str("</td><td>");
                     h.push_str(&entry.loc.line.to_string());
@@ -610,27 +623,6 @@ fn escape_html(s: &str) -> String {
     out
 }
 
-/// 对 JavaScript 字符串中的 `</script>` 进行转义。
-/// 将 `</script>`（不区分大小写）替换为 `<\/script>`，保留原始大小写。
-#[allow(dead_code)]
-fn escape_script(s: &str) -> String {
-    let lower = s.to_ascii_lowercase();
-    let pattern = "</script>";
-    let mut out = String::with_capacity(s.len());
-    let mut start = 0;
-    while let Some(pos) = lower[start..].find(pattern) {
-        let abs_pos = start + pos;
-        out.push_str(&s[start..abs_pos]);
-        let matched = &s[abs_pos..abs_pos + pattern.len()];
-        out.push_str(&matched[0..1]);
-        out.push('\\');
-        out.push_str(&matched[1..]);
-        start = abs_pos + pattern.len();
-    }
-    out.push_str(&s[start..]);
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,39 +658,6 @@ mod tests {
     #[test]
     fn test_escape_html_empty() {
         assert_eq!(escape_html(""), "");
-    }
-
-    #[test]
-    fn test_escape_script_basic() {
-        assert_eq!(escape_script("x</script>y"), "x<\\/script>y");
-    }
-
-    #[test]
-    fn test_escape_script_uppercase() {
-        assert_eq!(escape_script("</SCRIPT>"), "<\\/SCRIPT>");
-    }
-
-    #[test]
-    fn test_escape_script_mixed_case() {
-        assert_eq!(escape_script("</Script>"), "<\\/Script>");
-    }
-
-    #[test]
-    fn test_escape_script_multiple() {
-        assert_eq!(
-            escape_script("a</script>b</script>c"),
-            "a<\\/script>b<\\/script>c"
-        );
-    }
-
-    #[test]
-    fn test_escape_script_empty() {
-        assert_eq!(escape_script(""), "");
-    }
-
-    #[test]
-    fn test_escape_script_no_match() {
-        assert_eq!(escape_script("hello world"), "hello world");
     }
 
     // ---- HTML report tests (RED phase — stub returns empty) ----
