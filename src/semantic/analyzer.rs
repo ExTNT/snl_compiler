@@ -99,6 +99,7 @@ impl SemanticAnalyzer {
     fn collect_type_decs(&mut self, type_dec: &TypeDec) {
         if let TypeDec::Defined(defs) = type_dec {
             for def in defs {
+                self.validate_type_body(&def.body);
                 let ti = self.type_body_to_info(&def.body);
                 self.insert_symbol(SymbolEntry {
                     name: def.name.clone(),
@@ -115,6 +116,7 @@ impl SemanticAnalyzer {
     fn collect_var_decs(&mut self, var_dec: &VarDec) {
         if let VarDec::Defined(defs) = var_dec {
             for def in defs {
+                self.validate_type_desig(&def.type_name);
                 let ti = self.type_desig_to_info(&def.type_name);
                 for name in &def.names {
                     self.insert_symbol(SymbolEntry {
@@ -133,18 +135,18 @@ impl SemanticAnalyzer {
     fn collect_proc_decs(&mut self, proc_dec: &ProcDec) {
         if let ProcDec::Defined(procs) = proc_dec {
             for proc in procs {
-                let params: Vec<ParamInfo> = proc
-                    .params
-                    .iter()
-                    .map(|p| {
-                        let ti = self.type_desig_to_info(&p.type_name);
-                        ParamInfo {
-                            name: p.names.first().cloned().unwrap_or_default(),
-                            is_var: p.is_var,
-                            typ: ti,
-                        }
-                    })
-                    .collect();
+                let mut params = Vec::new();
+                for param in &proc.params {
+                    self.validate_type_desig(&param.type_name);
+                    let ti = self.type_desig_to_info(&param.type_name);
+                    for name in &param.names {
+                        params.push(ParamInfo {
+                            name: name.clone(),
+                            is_var: param.is_var,
+                            typ: ti.clone(),
+                        });
+                    }
+                }
 
                 self.insert_symbol(SymbolEntry {
                     name: proc.name.clone(),
@@ -203,24 +205,30 @@ impl SemanticAnalyzer {
             } => {
                 let cond_ty = self.check_exp(cond);
                 // SNL 以整数作为布尔值，条件必须为整数类型
-                if !matches!(cond_ty, Some(TypeInfo::Integer)) {
-                    self.error(
-                        SemanticErrCode::CondNotBool,
-                        "If condition must be integer type",
-                        *loc,
-                    );
+                if let Some(cond_ty) = cond_ty {
+                    let resolved = self.resolve_type(&cond_ty, &mut Vec::new());
+                    if !matches!(resolved, TypeInfo::Integer) {
+                        self.error(
+                            SemanticErrCode::CondNotBool,
+                            "If condition must be integer type",
+                            *loc,
+                        );
+                    }
                 }
                 self.check_program_body(then_branch);
                 self.check_program_body(else_branch);
             }
             Stm::While { cond, body, loc } => {
                 let cond_ty = self.check_exp(cond);
-                if !matches!(cond_ty, Some(TypeInfo::Integer)) {
-                    self.error(
-                        SemanticErrCode::CondNotBool,
-                        "While condition must be integer type",
-                        *loc,
-                    );
+                if let Some(cond_ty) = cond_ty {
+                    let resolved = self.resolve_type(&cond_ty, &mut Vec::new());
+                    if !matches!(resolved, TypeInfo::Integer) {
+                        self.error(
+                            SemanticErrCode::CondNotBool,
+                            "While condition must be integer type",
+                            *loc,
+                        );
+                    }
                 }
                 self.check_program_body(body);
             }
@@ -330,10 +338,21 @@ impl SemanticAnalyzer {
                 }
                 for (i, arg) in args.iter().enumerate() {
                     let arg_ty = self.check_exp(arg);
-                    if let Some(param) = params.get(i)
-                        && let Some(t) = &arg_ty {
-                                let rt = self.resolve_type(t, &mut Vec::new());
-                                let rp = self.resolve_type(&param.typ, &mut Vec::new());
+                    if let Some(param) = params.get(i) {
+                        if param.is_var && !matches!(arg, Exp::Variable(_, _)) {
+                            self.error(
+                                SemanticErrCode::ParamTypeMismatch,
+                                format!(
+                                    "Argument {} for var parameter '{}' must be a variable",
+                                    i + 1,
+                                    param.name
+                                ),
+                                loc,
+                            );
+                        }
+                        if let Some(t) = &arg_ty {
+                            let rt = self.resolve_type(t, &mut Vec::new());
+                            let rp = self.resolve_type(&param.typ, &mut Vec::new());
                             if !types_compatible(&rt, &rp) {
                                 self.error(
                                     SemanticErrCode::ParamTypeMismatch,
@@ -343,7 +362,8 @@ impl SemanticAnalyzer {
                                         name
                                     ),
                                     loc,
-                            );
+                                );
+                            }
                         }
                     }
                 }
@@ -386,11 +406,29 @@ impl SemanticAnalyzer {
 
     /// 检查变量访问并推导类型（含选择器链遍历）。
     fn check_var_access(&mut self, va: &VarAccess) -> Option<TypeInfo> {
-        let entry = self.symbols.lookup(&va.base);
+        let entry = self
+            .symbols
+            .lookup(&va.base)
+            .map(|e| (e.kind.clone(), e.typ.clone()));
         match entry {
-            None => None,
-            Some(e) => {
-                let mut current_ty = e.typ.clone();
+            None => {
+                self.error(
+                    SemanticErrCode::UndeclaredId,
+                    format!("Undeclared identifier '{}'", va.base),
+                    va.loc,
+                );
+                None
+            }
+            Some((kind, _)) if kind != IdKind::VarId => {
+                self.error(
+                    SemanticErrCode::WrongIdKind,
+                    format!("'{}' is not a variable", va.base),
+                    va.loc,
+                );
+                None
+            }
+            Some((_, typ)) => {
+                let mut current_ty = typ;
                 for sel in &va.selector {
                     current_ty = self.resolve_selector(&current_ty?, sel);
                 }
@@ -559,6 +597,49 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn validate_type_body(&mut self, body: &TypeBody) {
+        match body {
+            TypeBody::Array(arr) => self.validate_array_bounds(arr),
+            TypeBody::Record(rec) => {
+                for field in &rec.fields {
+                    self.validate_field_type(&field.typ);
+                }
+            }
+            TypeBody::Base(_) | TypeBody::Named(_) => {}
+        }
+    }
+
+    fn validate_type_desig(&mut self, typ: &TypeDesig) {
+        match typ {
+            TypeDesig::Array(arr) => self.validate_array_bounds(arr),
+            TypeDesig::Record(rec) => {
+                for field in &rec.fields {
+                    self.validate_field_type(&field.typ);
+                }
+            }
+            TypeDesig::Base(_) | TypeDesig::Named(_) => {}
+        }
+    }
+
+    fn validate_field_type(&mut self, typ: &FieldTypeDef) {
+        if let FieldTypeDef::Array(arr) = typ {
+            self.validate_array_bounds(arr);
+        }
+    }
+
+    fn validate_array_bounds(&mut self, arr: &ArrayTypeDef) {
+        if arr.low > arr.high {
+            self.error(
+                SemanticErrCode::ArraySubscriptRange,
+                format!(
+                    "Array lower bound {} exceeds upper bound {}",
+                    arr.low, arr.high
+                ),
+                arr.loc,
+            );
+        }
+    }
+
     fn error(&mut self, code: SemanticErrCode, msg: impl Into<String>, loc: Loc) {
         self.errors.push(CompileError::semantic(code, msg, loc));
     }
@@ -673,6 +754,32 @@ mod tests {
     }
 
     #[test]
+    fn test_undeclared_variable_in_expression() {
+        let errors = analyze("program p begin write(x) end.");
+        assert!(errors.iter().any(|e| matches!(
+            e.kind,
+            crate::error::ErrorKind::Semantic(SemanticErrCode::UndeclaredId)
+        )));
+    }
+
+    #[test]
+    fn test_non_variable_identifier_in_expression() {
+        let type_errors = analyze("program p type T = integer; begin write(T) end.");
+        assert!(type_errors.iter().any(|e| matches!(
+            e.kind,
+            crate::error::ErrorKind::Semantic(SemanticErrCode::WrongIdKind)
+        )));
+
+        let proc_errors = analyze(
+            "program p procedure f(); begin write(0) end begin write(f) end.",
+        );
+        assert!(proc_errors.iter().any(|e| matches!(
+            e.kind,
+            crate::error::ErrorKind::Semantic(SemanticErrCode::WrongIdKind)
+        )));
+    }
+
+    #[test]
     fn test_duplicate_definition() {
         analyze_ok("program p var integer x; begin x := 1 end.");
     }
@@ -709,6 +816,31 @@ mod tests {
             e.kind,
             crate::error::ErrorKind::Semantic(SemanticErrCode::ParamCountMismatch)
         )));
+    }
+
+    #[test]
+    fn test_multiple_names_in_one_parameter_declaration() {
+        analyze_ok(
+            "program p procedure q(integer a,b); begin write(a); write(b) end begin q(1,2) end.",
+        );
+    }
+
+    #[test]
+    fn test_var_parameter_requires_variable_argument() {
+        let errors = analyze(
+            "program p procedure q(var integer a); begin a := 1 end begin q(1 + 2) end.",
+        );
+        assert!(errors.iter().any(|e| matches!(
+            e.kind,
+            crate::error::ErrorKind::Semantic(SemanticErrCode::ParamTypeMismatch)
+        )));
+    }
+
+    #[test]
+    fn test_valid_var_parameter_argument() {
+        analyze_ok(
+            "program p var integer x; procedure q(var integer a); begin a := 1 end begin q(x) end.",
+        );
     }
 
     #[test]
@@ -773,6 +905,24 @@ mod tests {
         assert!(errors.iter().any(|e| matches!(
             e.kind,
             crate::error::ErrorKind::Semantic(SemanticErrCode::CondNotBool)
+        )));
+    }
+
+    #[test]
+    fn test_named_integer_condition() {
+        analyze_ok(
+            "program p type Bool = integer; var Bool x; begin if x then write(1) else write(0) fi end.",
+        );
+    }
+
+    #[test]
+    fn test_inverted_array_bounds() {
+        let errors = analyze(
+            "program p var array[5..1] of integer a; begin write(0) end.",
+        );
+        assert!(errors.iter().any(|e| matches!(
+            e.kind,
+            crate::error::ErrorKind::Semantic(SemanticErrCode::ArraySubscriptRange)
         )));
     }
 

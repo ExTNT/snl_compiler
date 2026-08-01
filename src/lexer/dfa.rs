@@ -48,7 +48,7 @@ pub struct Dfa {
 #[derive(Debug, Clone)]
 pub struct DfaResult {
     /// 识别到的 Token 种类
-    pub kind: TokenKind,
+    pub kind: Result<TokenKind, String>,
     /// Token 的起始行号
     pub line: usize,
     /// Token 的起始列号
@@ -106,29 +106,36 @@ impl Dfa {
             DfaState::InIdent => {
                 let kind = super::keyword::lookup_keyword(&self.lexeme);
                 Some(DfaResult {
-                    kind,
+                    kind: Ok(kind),
                     line: self.line,
                     col: self.col,
                     backtrack: false,
                 })
             }
             DfaState::InNumber => {
-                let val: i64 = self.lexeme.parse().expect("integer literal parse failed");
                 Some(DfaResult {
-                    kind: TokenKind::IntConst(val),
+                    kind: self
+                        .lexeme
+                        .parse::<i64>()
+                        .map(TokenKind::IntConst)
+                        .map_err(|_| "Integer literal out of range".to_string()),
                     line: self.line,
                     col: self.col,
                     backtrack: false,
                 })
             }
             DfaState::InAssign => {
-                // 孤立的 ':' 不是有效 SNL Token，直接丢弃
-                None
+                Some(DfaResult {
+                    kind: Err("Unexpected ':'; expected ':='".to_string()),
+                    line: self.line,
+                    col: self.col,
+                    backtrack: false,
+                })
             }
             DfaState::InComment => None,
             DfaState::InChar | DfaState::InCharEnd => None,
             DfaState::InRange => Some(DfaResult {
-                kind: TokenKind::Dot,
+                kind: Ok(TokenKind::Dot),
                 line: self.line,
                 col: self.col,
                 backtrack: false,
@@ -181,14 +188,19 @@ impl Dfa {
             ',' => Some(self.result(TokenKind::Comma)),
             '<' => Some(self.result(TokenKind::Less)),
             '=' => Some(self.result(TokenKind::Equal)),
-            _ => None,
+            _ => Some(DfaResult {
+                kind: Err(format!("Invalid character '{}'", ch)),
+                line: self.line,
+                col: self.col,
+                backtrack: false,
+            }),
         }
     }
 
     /// 创建不含回溯的简单结果。
     fn result(&self, kind: TokenKind) -> DfaResult {
         DfaResult {
-            kind,
+            kind: Ok(kind),
             line: self.line,
             col: self.col,
             backtrack: false,
@@ -204,7 +216,7 @@ impl Dfa {
             let kind = super::keyword::lookup_keyword(&self.lexeme);
             self.state = DfaState::Done;
             Some(DfaResult {
-                kind,
+                kind: Ok(kind),
                 line: self.line,
                 col: self.col,
                 backtrack: true,
@@ -218,10 +230,13 @@ impl Dfa {
             self.lexeme.push(ch);
             None
         } else {
-            let val: i64 = self.lexeme.parse().expect("integer literal parse failed");
             self.state = DfaState::Done;
             Some(DfaResult {
-                kind: TokenKind::IntConst(val),
+                kind: self
+                    .lexeme
+                    .parse::<i64>()
+                    .map(TokenKind::IntConst)
+                    .map_err(|_| "Integer literal out of range".to_string()),
                 line: self.line,
                 col: self.col,
                 backtrack: true,
@@ -234,16 +249,19 @@ impl Dfa {
             // 完整赋值符 ":="，已消费 = 
             self.state = DfaState::Done;
             Some(DfaResult {
-                kind: TokenKind::Assign,
+                kind: Ok(TokenKind::Assign),
                 line: self.line,
                 col: self.col,
                 backtrack: false,
             })
         } else {
-            // 孤立的 ':' — 在 SNL 中无效，丢弃（不回退，ch 会随调用方 None 分支前进）
-            self.state = DfaState::Start;
-            self.lexeme.clear();
-            None
+            self.state = DfaState::Done;
+            Some(DfaResult {
+                kind: Err("Unexpected ':'; expected ':='".to_string()),
+                line: self.line,
+                col: self.col,
+                backtrack: true,
+            })
         }
     }
 
@@ -270,16 +288,14 @@ impl Dfa {
         if ch == '\'' {
             let c = self.lexeme.chars().next().unwrap_or('\0');
             Some(DfaResult {
-                kind: TokenKind::CharConst(c),
+                kind: Ok(TokenKind::CharConst(c)),
                 line: self.line,
                 col: self.col,
                 backtrack: false,
             })
         } else {
-            // 格式错误：多字符字面量或缺少闭合引号（容错处理）
-            let c = self.lexeme.chars().next().unwrap_or('\0');
             Some(DfaResult {
-                kind: TokenKind::CharConst(c),
+                kind: Err("Unterminated character literal".to_string()),
                 line: self.line,
                 col: self.col,
                 backtrack: true,
@@ -293,7 +309,7 @@ impl Dfa {
         if ch == '.' {
             // ".." — Range 运算符，第二个点已消费
             Some(DfaResult {
-                kind: TokenKind::Range,
+                kind: Ok(TokenKind::Range),
                 line: self.line,
                 col: self.col,
                 backtrack: false,
@@ -301,7 +317,7 @@ impl Dfa {
         } else {
             // 单个 "." — Dot 运算符，当前字符需回溯
             Some(DfaResult {
-                kind: TokenKind::Dot,
+                kind: Ok(TokenKind::Dot),
                 line: self.line,
                 col: self.col,
                 backtrack: true,

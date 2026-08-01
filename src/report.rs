@@ -29,7 +29,6 @@ pub(crate) fn format_report_html(
 
     // ===== CSS =====
     h.push_str("<style>\n");
-    h.push_str("@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=JetBrains+Mono:wght@400;500&display=swap');\n");
     h.push_str("*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}\n");
     h.push_str(":root{--bg:#0b0d11;--bg-panel:#11141b;--bg-card:#161a24;--bg-hover:#1c2130;--bg-active:#232a3b;\n");
     h.push_str("--text:#c4cad6;--text-dim:#788096;--text-muted:#4c5366;\n");
@@ -344,96 +343,66 @@ pub(crate) fn format_report_html(
                 (n, rest)
             }
 
+            struct TreeLine<'a> {
+                depth: usize,
+                content: &'a str,
+                is_node: bool,
+            }
+
+            let tree_lines: Vec<TreeLine<'_>> = tree_text
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    let (depth, rest) = count_depth(line);
+                    let content = rest
+                        .strip_prefix("├── ")
+                        .or_else(|| rest.strip_prefix("└── "));
+                    TreeLine {
+                        depth,
+                        content: content.unwrap_or(rest).trim(),
+                        is_node: content.is_some(),
+                    }
+                })
+                .collect();
+
             h.push_str("<div class=\"tree-scroll\">\n");
             h.push_str("<div id=\"tree-browser\" class=\"tree-browser\">\n");
-            for line in tree_text.lines() {
-                if line.is_empty() {
-                    continue;
+            let mut open_depths = Vec::new();
+            for (index, line) in tree_lines.iter().enumerate() {
+                while open_depths
+                    .last()
+                    .is_some_and(|open_depth| *open_depth >= line.depth)
+                {
+                    h.push_str("</details></div>\n");
+                    open_depths.pop();
                 }
-                let (depth, rest) = count_depth(line);
 
-                // 检测当前行是否为节点行（以 ├── 或 └── 开头）
-                let (is_last, content_opt): (bool, Option<&str>) =
-                    if let Some(c) = rest.strip_prefix("├── ") {
-                        (false, Some(c))
-                    } else if let Some(c) = rest.strip_prefix("└── ") {
-                        (true, Some(c))
-                    } else {
-                        (false, None)
-                    };
-
-                if let Some(content) = content_opt {
-                    let content = content.trim();
-                    // 哨兵行 └── .
-                    if content == "." {
-                        let escaped_content = escape_html(content);
-                        h.push_str(&format!(
-                            "<div class=\"tree-text\" data-tree-text=\"{}\" title=\"{}\" style=\"padding-left:{}px\">{}</div>\n",
-                            escaped_content,
-                            escaped_content,
-                            depth * 20,
-                            escaped_content
-                        ));
-                        continue;
-                    }
-                    // 二元表达式子节点：ExpK 开头且内容为 Op 或 Const —— 纯文本不折叠
-                    let is_binary_child = content.starts_with("ExpK")
-                        && (content.contains("Op  ") || content.contains("Const  "));
-                    if is_binary_child {
-                        let escaped_content = escape_html(content);
-                        h.push_str(&format!(
-                            "<div class=\"tree-text\" data-tree-text=\"{}\" title=\"{}\" style=\"padding-left:{}px\">{}</div>\n",
-                            escaped_content,
-                            escaped_content,
-                            depth * 20,
-                            escaped_content
-                        ));
-                    } else {
-                        let _ = is_last; // suppress unused warning
-                        let type_class = node_type_class(content);
-                        let escaped_content = escape_html(content);
-                        h.push_str(&format!(
-                            "<div class=\"tree-guide\" style=\"padding-left:{}px\"><details class=\"tree-node {}\" data-tree-text=\"{}\" open><summary title=\"{}\">{}</summary>\n",
-                            depth * 20,
-                            type_class,
-                            escaped_content,
-                            escaped_content,
-                            escaped_content
-                        ));
-                    }
+                let has_children = tree_lines
+                    .get(index + 1)
+                    .is_some_and(|next| next.depth > line.depth);
+                let escaped_content = escape_html(line.content);
+                if line.is_node && has_children {
+                    let type_class = node_type_class(line.content);
+                    h.push_str(&format!(
+                        "<div class=\"tree-guide\" style=\"padding-left:{}px\"><details class=\"tree-node {}\" data-tree-text=\"{}\" open><summary title=\"{}\">{}</summary>\n",
+                        line.depth * 20,
+                        type_class,
+                        escaped_content,
+                        escaped_content,
+                        escaped_content
+                    ));
+                    open_depths.push(line.depth);
                 } else {
-                    // 普通行：按缩进深度定位
-                    let escaped_rest = escape_html(rest);
                     h.push_str(&format!(
                         "<div class=\"tree-text\" data-tree-text=\"{}\" title=\"{}\" style=\"padding-left:{}px\">{}</div>\n",
-                        escaped_rest,
-                        escaped_rest,
-                        depth * 20,
-                        escaped_rest
+                        escaped_content,
+                        escaped_content,
+                        line.depth * 20,
+                        escaped_content
                     ));
                 }
             }
-
-            // 关闭所有未闭合的 <details>
-            let details_count = tree_text
-                .lines()
-                .filter(|l| {
-                    let (_, rest) = count_depth(l);
-                    let content_opt = rest
-                        .strip_prefix("├── ")
-                        .or_else(|| rest.strip_prefix("└── "))
-                        .map(|c| c.trim());
-                    match content_opt {
-                        None => false,
-                        Some(".") => false,
-                        Some(c) => {
-                            !(c.starts_with("ExpK")
-                                && (c.contains("Op  ") || c.contains("Const  ")))
-                        }
-                    }
-                })
-                .count();
-            for _ in 0..details_count {
+            while open_depths.pop().is_some() {
                 h.push_str("</details></div>\n");
             }
             h.push_str("</div>\n");
@@ -652,6 +621,7 @@ mod tests {
 
     use snl_compiler::ast::nodes::{DeclarePart, Loc, ProcDec, Program, StmList, TypeDec, VarDec};
     use snl_compiler::lexer::{LexerError, Token, TokenKind};
+    use snl_compiler::parser::rd::RdParser;
 
     fn sample_tokens() -> Vec<Token> {
         vec![
@@ -696,6 +666,16 @@ mod tests {
             },
             loc,
         }
+    }
+
+    fn parse_program(source: &str) -> Program {
+        let mut lexer = snl_compiler::lexer::Lexer::new();
+        let (tokens, errors) = lexer.tokenize(source);
+        assert!(errors.is_empty());
+        let mut parser = RdParser::new(tokens);
+        let program = parser.parse().expect("Parse should succeed");
+        assert!(parser.errors().is_empty());
+        program
     }
 
     #[test]
@@ -831,5 +811,37 @@ mod tests {
 
         let html_without = format_report_html("test.snl", &[], &[], None, &[], None, &[]);
         assert!(html_without.contains("无"), "Should show 无 when no errors");
+    }
+
+    #[test]
+    fn test_html_report_has_no_external_dependencies() {
+        let html = format_report_html("test.snl", &[], &[], None, &[], None, &[]);
+        assert!(!html.contains("@import"));
+        assert!(!html.contains("https://"));
+        assert!(!html.contains("<link"));
+        assert!(!html.contains("<script src="));
+    }
+
+    #[test]
+    fn test_html_tree_contains_binary_operands() {
+        let program = parse_program("program p var integer x; begin write(x + 5) end.");
+        let html = format_report_html("test.snl", &[], &[], Some(&program), &[], None, &[]);
+        assert!(html.contains("ExpK  Op  +"));
+        assert!(html.contains("ExpK  x  IdV"));
+        assert!(html.contains("ExpK  Const  5"));
+    }
+
+    #[test]
+    fn test_html_tree_closes_siblings_at_same_depth() {
+        let program = parse_program("program p var integer x; begin write(x) end.");
+        let html = format_report_html("test.snl", &[], &[], Some(&program), &[], None, &[]);
+        let var_pos = html.find(">VarK</summary>").expect("VarK node");
+        let stm_pos = html.find(">StmLk</summary>").expect("StmLk node");
+        assert!(var_pos < stm_pos);
+        assert!(html[var_pos..stm_pos].contains("</details></div>"));
+        assert_eq!(
+            html.matches("<details ").count(),
+            html.matches("</details>").count()
+        );
     }
 }

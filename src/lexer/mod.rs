@@ -89,28 +89,43 @@ impl Lexer {
 
             match result {
                 Some(r) if dfa.state == DfaState::Done => {
-                    // Token 结束于 Done 状态：push 并 reset
-                    self.tokens.push(Token {
-                        kind: r.kind,
-                        line: r.line,
-                        col: r.col,
-                    });
-                    dfa.reset(line, col);
-                    if !r.backtrack {
+                    match r.kind {
+                        Ok(kind) => self.tokens.push(Token {
+                            kind,
+                            line: r.line,
+                            col: r.col,
+                        }),
+                        Err(msg) => self.errors.push(LexerError {
+                            msg,
+                            line: r.line,
+                            col: r.col,
+                        }),
+                    }
+                    if r.backtrack {
+                        dfa.reset(line, col);
+                    } else {
                         i += 1;
                         col += 1;
+                        dfa.reset(line, col);
                     }
                     // 若 backtrack=true，当前字符将作为下一个 Token 的起始重新处理
                 }
                 Some(r) => {
-                    // 直接从 Start 产生的单字符 Token 或注释结束后的恢复
-                    self.tokens.push(Token {
-                        kind: r.kind,
-                        line: r.line,
-                        col: r.col,
-                    });
+                    match r.kind {
+                        Ok(kind) => self.tokens.push(Token {
+                            kind,
+                            line: r.line,
+                            col: r.col,
+                        }),
+                        Err(msg) => self.errors.push(LexerError {
+                            msg,
+                            line: r.line,
+                            col: r.col,
+                        }),
+                    }
                     i += 1;
                     col += 1;
+                    dfa.reset(line, col);
                 }
                 None => {
                     i += 1;
@@ -121,6 +136,8 @@ impl Lexer {
                         col = 1;
                         dfa.line = line;
                         dfa.col = col;
+                    } else if dfa.state == DfaState::Start {
+                        dfa.reset(line, col);
                     }
                 }
             }
@@ -145,11 +162,18 @@ impl Lexer {
             }
             _ => {
                 if let Some(result) = dfa.finish() {
-                    self.tokens.push(Token {
-                        kind: result.kind,
-                        line: result.line,
-                        col: result.col,
-                    });
+                    match result.kind {
+                        Ok(kind) => self.tokens.push(Token {
+                            kind,
+                            line: result.line,
+                            col: result.col,
+                        }),
+                        Err(msg) => self.errors.push(LexerError {
+                            msg,
+                            line: result.line,
+                            col: result.col,
+                        }),
+                    }
                 }
             }
         }
@@ -429,17 +453,10 @@ mod tests {
     }
 
     #[test]
-    fn test_underscore_is_separator() {
-        // SNL 标识符不允许下划线，下划线被当作分隔符处理
-        let kinds = token_kinds("snake_case");
-        assert_eq!(
-            kinds,
-            vec![
-                TokenKind::Ident("snake".into()),
-                TokenKind::Ident("case".into()),
-                TokenKind::Eof,
-            ]
-        );
+    fn test_underscore_is_error() {
+        let mut lexer = Lexer::new();
+        let (_, errors) = lexer.tokenize("snake_case");
+        assert!(errors.iter().any(|e| e.msg.contains("Invalid character")));
     }
 
     #[test]
@@ -486,9 +503,10 @@ mod tests {
     #[test]
     fn test_colon_alone_is_error() {
         let mut lexer = Lexer::new();
-        let (tokens, _) = lexer.tokenize("x :");
+        let (tokens, errors) = lexer.tokenize("x :");
         let kinds: Vec<_> = tokens.iter().map(|t| &t.kind).collect();
         assert!(kinds.contains(&&TokenKind::Ident("x".into())));
+        assert!(errors.iter().any(|e| e.msg.contains("Unexpected ':'")));
     }
 
     #[test]
@@ -522,6 +540,47 @@ mod tests {
                 TokenKind::Eof,
             ]
         );
+    }
+
+    #[test]
+    fn test_integer_overflow_is_error() {
+        let mut lexer = Lexer::new();
+        let (tokens, errors) = lexer.tokenize("9223372036854775808;");
+        assert!(errors.iter().any(|e| e.msg.contains("out of range")));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::Semicolon));
+        assert!(!tokens.iter().any(|t| matches!(t.kind, TokenKind::IntConst(_))));
+    }
+
+    #[test]
+    fn test_integer_overflow_at_eof_is_error() {
+        let mut lexer = Lexer::new();
+        let (tokens, errors) = lexer.tokenize("9223372036854775808");
+        assert!(errors.iter().any(|e| e.msg.contains("out of range")));
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].kind, TokenKind::Eof);
+    }
+
+    #[test]
+    fn test_invalid_character_is_error() {
+        let mut lexer = Lexer::new();
+        let (tokens, errors) = lexer.tokenize("write(@42)");
+        let error = errors
+            .iter()
+            .find(|e| e.msg.contains("Invalid character '@'"))
+            .expect("invalid character error");
+        assert_eq!((error.line, error.col), (1, 7));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::IntConst(42)));
+    }
+
+    #[test]
+    fn test_missing_closing_quote_before_delimiter_is_error() {
+        let mut lexer = Lexer::new();
+        let (tokens, errors) = lexer.tokenize("write('a)");
+        assert!(errors
+            .iter()
+            .any(|e| e.msg.contains("Unterminated character literal")));
+        assert!(tokens.iter().any(|t| t.kind == TokenKind::RParent));
+        assert!(!tokens.iter().any(|t| matches!(t.kind, TokenKind::CharConst(_))));
     }
 
     #[test]

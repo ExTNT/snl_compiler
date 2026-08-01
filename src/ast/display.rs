@@ -119,8 +119,7 @@ impl Stm {
                 write!(f, "{}├── ExpK  ", cp)?;
                 lhs.fmt_lhs(f)?;
                 writeln!(f)?;
-                write!(f, "{}└── ExpK  ", cp)?;
-                rhs.fmt_node(f)?;
+                rhs.fmt_tree(f, &cp, "└──")?;
             }
             Stm::If {
                 cond,
@@ -130,16 +129,14 @@ impl Stm {
             } => {
                 writeln!(f, "{}├── StmtK  If", prefix)?;
                 let cp = format!("{}│   ", prefix);
-                write!(f, "{}├── ExpK  ", cp)?;
-                cond.fmt_node(f)?;
+                cond.fmt_tree(f, &cp, "├──")?;
                 then_branch.fmt_node(f, &cp)?;
                 else_branch.fmt_node(f, &cp)?;
             }
             Stm::While { cond, body, loc: _ } => {
                 writeln!(f, "{}├── StmtK  While", prefix)?;
                 let cp = format!("{}│   ", prefix);
-                write!(f, "{}├── ExpK  ", cp)?;
-                cond.fmt_node(f)?;
+                cond.fmt_tree(f, &cp, "├──")?;
                 body.fmt_node(f, &cp)?;
             }
             Stm::Read { var, loc: _ } => {
@@ -148,14 +145,12 @@ impl Stm {
             Stm::Write { exp, loc: _ } => {
                 writeln!(f, "{}├── StmtK  Write", prefix)?;
                 let cp = format!("{}│   ", prefix);
-                write!(f, "{}└── ExpK  ", cp)?;
-                exp.fmt_node(f)?;
+                exp.fmt_tree(f, &cp, "└──")?;
             }
             Stm::Return { exp, loc: _ } => {
                 writeln!(f, "{}├── StmtK  Return", prefix)?;
                 let cp = format!("{}│   ", prefix);
-                write!(f, "{}└── ExpK  ", cp)?;
-                exp.fmt_node(f)?;
+                exp.fmt_tree(f, &cp, "└──")?;
             }
             Stm::Call { name, args, loc: _ } => {
                 writeln!(f, "{}├── StmtK  Call", prefix)?;
@@ -163,9 +158,13 @@ impl Stm {
                 if args.is_empty() {
                     writeln!(f, "{}└── ExpK  {}  IdV", cp, name)?;
                 } else {
-                    for arg in args {
-                        write!(f, "{}├── ExpK  ", cp)?;
-                        arg.fmt_node(f)?;
+                    for (index, arg) in args.iter().enumerate() {
+                        let connector = if index + 1 == args.len() {
+                            "└──"
+                        } else {
+                            "├──"
+                        };
+                        arg.fmt_tree(f, &cp, connector)?;
                     }
                 }
             }
@@ -178,13 +177,33 @@ impl Stm {
 
 impl Exp {
     pub fn fmt_node(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.fmt_content(f)?;
+        if let Exp::Binary { left, right, .. } = self {
+            left.fmt_tree(f, "", "├──")?;
+            right.fmt_tree(f, "", "└──")?;
+        }
+        Ok(())
+    }
+
+    fn fmt_tree(
+        &self,
+        f: &mut Formatter<'_>,
+        prefix: &str,
+        connector: &str,
+    ) -> fmt::Result {
+        write!(f, "{}{} ExpK  ", prefix, connector)?;
+        self.fmt_content(f)?;
+        if let Exp::Binary { left, right, .. } = self {
+            let child_prefix = format!("{}│   ", prefix);
+            left.fmt_tree(f, &child_prefix, "├──")?;
+            right.fmt_tree(f, &child_prefix, "└──")?;
+        }
+        Ok(())
+    }
+
+    fn fmt_content(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Exp::Binary {
-                op,
-                left: _,
-                right: _,
-                loc: _,
-            } => {
+            Exp::Binary { op, .. } => {
                 let op_str = match op {
                     BinOp::Add => "+",
                     BinOp::Sub => "-",
@@ -324,5 +343,29 @@ impl VarAccess {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lexer::Lexer;
+    use crate::parser::rd::RdParser;
+
+    #[test]
+    fn test_binary_expression_displays_both_operands() {
+        let mut lexer = Lexer::new();
+        let (tokens, errors) =
+            lexer.tokenize("program p var integer x; begin write(x + 5) end.");
+        assert!(errors.is_empty());
+        let mut parser = RdParser::new(tokens);
+        let program = parser.parse().expect("Parse should succeed");
+        let tree = format!("{}", program);
+
+        let operator = tree.find("ExpK  Op  +").expect("operator node");
+        let left = tree[operator..].find("ExpK  x  IdV").expect("left operand");
+        let right = tree[operator..]
+            .find("ExpK  Const  5")
+            .expect("right operand");
+        assert!(left < right);
     }
 }

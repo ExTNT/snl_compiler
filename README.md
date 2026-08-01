@@ -12,7 +12,7 @@ SNL（Small Nested Language）编译器基于 Rust 实现，将 SNL 源程序编
 - **比较运算**：`<`（小于）、`=`（等于）
 - **算术运算**：`+`、`-`、`*`、`/`
 - **输入输出**：`read(x)` 读取、`write(x)` 输出
-- **过程**：支持嵌套定义和递归调用，值参数
+- **过程**：支持嵌套定义和递归调用、值参数与 `var` 引用参数；复合值参数按完整对象传递
 
 ### SNL 示例程序
 
@@ -158,7 +158,7 @@ snl_compiler/
 ```bash
 cargo build              # debug 模式
 cargo build --release    # release 模式
-cargo test               # 全部 139 个测试
+cargo test               # 全部 168 个测试
 ```
 
 ### 编译 SNL 程序
@@ -184,11 +184,12 @@ spim -file samples/hello.asm
 ### 分模块测试
 
 ```bash
-cargo test lexer       # 词法分析 (25 个用例)
-cargo test parser      # 语法分析 (43 个用例)
-cargo test semantic    # 语义分析 (22 个用例)
-cargo test codegen     # 代码生成 (35 个用例)
-cargo test --bin snl_compiler  # HTML 报告/入口 (14 个用例)
+cargo test lexer       # 词法分析 (29 个用例)
+cargo test parser      # 语法分析 (47 个用例)
+cargo test ast         # AST 显示 (1 个用例)
+cargo test semantic    # 语义分析 (29 个用例)
+cargo test codegen     # 代码生成 (45 个用例)
+cargo test --bin snl_compiler  # HTML 报告/入口 (17 个用例)
 ```
 
 ---
@@ -248,7 +249,7 @@ Warning: LL(1) verification failed (RD parse succeeded)
 | 错误阶段 | 处理策略 |
 |---------|---------|
 | 词法错误 | 立即退出（后续阶段无法处理） |
-| 语法错误 | 收集但不阻止（AST 可能不完整，继续语义分析） |
+| 语法错误 | 收集后继续语义分析以生成完整报告，但阻止代码生成并返回失败 |
 | LL(1) 验证 | 文法冲突致命退出；验证不匹配仅警告（RD 已成功构建 AST） |
 | 语义错误 | 收集后退出（代码生成需要正确类型信息） |
 | 代码生成错误 | 收集后退出（汇编代码不完整） |
@@ -266,6 +267,6 @@ Warning: LL(1) verification failed (RD parse succeeded)
 | **安全性** | 3 | 尾递归→循环、panic→CompileError、unwrap→expect |
 | **代码质量** | 5 | Option 返回类型、Display/Error 实现、ID 列表去重、LL(1) 恢复 |
 
-全部 25 个样例程序已批量编译通过，139 个测试通过。
+全部 25 个样例程序已批量编译通过，168 个测试通过。
 
 详细报告：**`审计文档.md`**。

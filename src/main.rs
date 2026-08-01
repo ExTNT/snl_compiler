@@ -156,6 +156,9 @@ fn main() {
         for err in &semantic_errors {
             eprintln!("  Line {}:{} — {}", err.loc.line, err.loc.col, err.msg);
         }
+    }
+
+    if !syntax_errors.is_empty() || !semantic_errors.is_empty() {
         process::exit(1);
     }
 

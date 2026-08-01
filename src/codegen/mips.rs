@@ -6,10 +6,10 @@
 //! ## 运行时约定
 //! - **全局变量**: 分配在 `.data` 段，通过 `la` + 标签名访问
 //! - **局部变量**: 分配在栈上，通过 `$fp`（帧指针）相对寻址
-//! - **过程调用**: 使用 `jal`/`jr $ra`，栈帧保存 `$fp` 和 `$ra`
-//! - **参数传递**: 调用者将实参压栈（从右到左），被调用者通过 `$fp + offset` 读取
+//! - **过程调用**: 使用 `jal`/`jr $ra`，栈帧保存 `$fp`、`$ra` 和静态链
+//! - **参数传递**: 标量按值、复合值完整复制、`var` 传地址，调用者从右到左压栈
 //! - **返回值**: 统一通过 `$v0` 返回
-//! - **临时寄存器**: `$t0` 用于地址计算，`$t7` 用于乘法中间结果，`$t8` 用于全局变量加载
+//! - **临时寄存器**: `$t0` 用于地址计算，`$t1`/`$t2` 用于复合值复制
 //!
 //! ## 类型到 MIPS 的映射
 //! - `integer` → 4 字节，`lw`/`sw`
@@ -40,16 +40,44 @@ pub enum CodegenType {
 
 impl CodegenType {
     /// 计算该类型变量的分配大小（字节）。
-    fn size_of(&self) -> i32 {
+    fn size_of(&self) -> Result<i32, String> {
         match self {
-            CodegenType::Integer => 4,
-            CodegenType::Char => 4,
+            CodegenType::Integer | CodegenType::Char => Ok(4),
             CodegenType::Array(elem, low, high) => {
-                let count = (high - low + 1) as i32;
-                count * elem.element_byte_size()
+                let count = high
+                    .checked_sub(*low)
+                    .and_then(|n| n.checked_add(1))
+                    .ok_or_else(|| "Array bound arithmetic overflow".to_string())?;
+                if count <= 0 {
+                    return Err(format!("Invalid array bounds [{}..{}]", low, high));
+                }
+                let count = i32::try_from(count)
+                    .map_err(|_| "Array element count exceeds MIPS limits".to_string())?;
+                count
+                    .checked_mul(elem.element_byte_size())
+                    .ok_or_else(|| "Array storage size overflow".to_string())
             }
-            CodegenType::Record(fields) => fields.iter().map(|(_, t)| t.size_of()).sum(),
+            CodegenType::Record(fields) => {
+                let mut size = 0i32;
+                for (_, typ) in fields {
+                    size = size
+                        .checked_add(typ.size_of()?)
+                        .ok_or_else(|| "Record storage size overflow".to_string())?;
+                }
+                Ok(size)
+            }
         }
+    }
+
+    fn slot_size(&self) -> Result<i32, String> {
+        let size = self.size_of()?;
+        size.checked_add(3)
+            .map(|n| n & !3)
+            .ok_or_else(|| "Aligned storage size overflow".to_string())
+    }
+
+    fn is_aggregate(&self) -> bool {
+        matches!(self, CodegenType::Array(_, _, _) | CodegenType::Record(_))
     }
 
     /// 数组下标运算时的元素步长（字节）。
@@ -66,17 +94,19 @@ impl CodegenType {
     }
 
     /// 查找记录字段的偏移量和类型。
-    fn field_offset(&self, name: &str) -> Option<(i32, CodegenType)> {
+    fn field_offset(&self, name: &str) -> Result<Option<(i32, CodegenType)>, String> {
         if let CodegenType::Record(fields) = self {
             let mut offset = 0i32;
             for (fname, ft) in fields {
                 if fname == name {
-                    return Some((offset, ft.clone()));
+                    return Ok(Some((offset, ft.clone())));
                 }
-                offset += ft.size_of();
+                offset = offset
+                    .checked_add(ft.size_of()?)
+                    .ok_or_else(|| "Record field offset overflow".to_string())?;
             }
         }
-        None
+        Ok(None)
     }
 }
 
@@ -198,18 +228,52 @@ fn field_type_to_codegen(ft: &FieldTypeDef) -> CodegenType {
 
 // ===== MIPS 上下文 =====
 
+#[derive(Clone, Debug)]
+enum Storage {
+    Global(String),
+    Local { level: usize, offset: i32 },
+    ValueParam { level: usize, offset: i32 },
+    RefParam { level: usize, offset: i32 },
+}
+
+#[derive(Clone, Debug)]
+struct VarBinding {
+    storage: Storage,
+    typ: CodegenType,
+}
+
+#[derive(Clone, Debug)]
+struct ParamLayout {
+    name: String,
+    is_var: bool,
+    typ: CodegenType,
+    size: i32,
+    slot_size: i32,
+    offset: i32,
+}
+
+#[derive(Clone, Debug)]
+struct ProcMeta {
+    label: String,
+    path: Vec<String>,
+    level: usize,
+    parent_level: usize,
+    params: Vec<ParamLayout>,
+}
+
 /// MIPS 代码生成上下文。
 ///
 /// 维护汇编代码字符串、数据段字符串、标签计数器、
-/// 变量偏移量表（嵌套作用域）、变量类型表以及帧大小栈。
+/// 变量绑定、过程词法作用域以及帧大小栈。
 pub struct MipsContext {
     pub code: String,
     pub data: String,
     label_counter: usize,
-    var_offsets: Vec<HashMap<String, (i32, usize)>>,
-    var_types: Vec<HashMap<String, CodegenType>>,
+    bindings: Vec<HashMap<String, VarBinding>>,
+    proc_scopes: Vec<HashMap<String, ProcMeta>>,
     frame_sizes: Vec<i32>,
     nesting_level: usize,
+    epilogue_labels: Vec<String>,
     errors: Vec<CompileError>,
 }
 
@@ -225,10 +289,11 @@ impl MipsContext {
             code: String::new(),
             data: String::new(),
             label_counter: 0,
-            var_offsets: vec![HashMap::new()],
-            var_types: vec![HashMap::new()],
-            frame_sizes: vec![4],
+            bindings: vec![HashMap::new()],
+            proc_scopes: Vec::new(),
+            frame_sizes: vec![0],
             nesting_level: 0,
+            epilogue_labels: Vec::new(),
             errors: Vec::new(),
         }
     }
@@ -244,12 +309,14 @@ impl MipsContext {
         label
     }
 
-    fn current_scope(&self) -> &HashMap<String, (i32, usize)> {
-        self.var_offsets.last().expect("var_offsets should never be empty")
+    fn current_scope(&self) -> &HashMap<String, VarBinding> {
+        self.bindings.last().expect("bindings should never be empty")
     }
 
-    fn current_scope_mut(&mut self) -> &mut HashMap<String, (i32, usize)> {
-        self.var_offsets.last_mut().expect("var_offsets should never be empty")
+    fn current_scope_mut(&mut self) -> &mut HashMap<String, VarBinding> {
+        self.bindings
+            .last_mut()
+            .expect("bindings should never be empty")
     }
 
     /// 在当前作用域中为变量分配栈空间。
@@ -257,15 +324,36 @@ impl MipsContext {
     /// 若变量已在当前作用域声明则跳过。
     pub fn alloc_var(&mut self, name: &str, typ: &CodegenType) {
         if !self.current_scope().contains_key(name) {
-            let offset = *self.frame_sizes.last().expect("frame_sizes should never be empty");
+            let slot_size = match typ.slot_size() {
+                Ok(size) => size,
+                Err(msg) => {
+                    self.error(msg);
+                    return;
+                }
+            };
+            let current_size = *self
+                .frame_sizes
+                .last()
+                .expect("frame_sizes should never be empty");
+            let offset = match current_size.checked_add(slot_size) {
+                Some(offset) => offset,
+                None => {
+                    self.error("Procedure frame size overflow");
+                    return;
+                }
+            };
             let level = self.nesting_level;
-            self.current_scope_mut()
-                .insert(name.to_string(), (offset, level));
-            self.var_types
+            self.current_scope_mut().insert(
+                name.to_string(),
+                VarBinding {
+                    storage: Storage::Local { level, offset },
+                    typ: typ.clone(),
+                },
+            );
+            *self
+                .frame_sizes
                 .last_mut()
-                .expect("var_types should never be empty")
-                .insert(name.to_string(), typ.clone());
-            *self.frame_sizes.last_mut().expect("frame_sizes should never be empty") += typ.size_of();
+                .expect("frame_sizes should never be empty") = offset;
         }
     }
 
@@ -273,9 +361,14 @@ impl MipsContext {
     ///
     /// 从最内层作用域向外搜索。
     pub fn get_var_offset(&self, name: &str) -> Option<(i32, usize)> {
-        for scope in self.var_offsets.iter().rev() {
-            if let Some(&val) = scope.get(name) {
-                return Some(val);
+        for scope in self.bindings.iter().rev() {
+            if let Some(binding) = scope.get(name) {
+                return match binding.storage {
+                    Storage::Global(_) => Some((0, 0)),
+                    Storage::Local { level, offset } => Some((offset, level)),
+                    Storage::ValueParam { level, offset }
+                    | Storage::RefParam { level, offset } => Some((-offset, level)),
+                };
             }
         }
         None
@@ -283,28 +376,39 @@ impl MipsContext {
 
     /// 查找变量的代码生成类型。
     pub fn get_var_type(&self, name: &str) -> Option<&CodegenType> {
-        for scope in self.var_types.iter().rev() {
-            if let Some(typ) = scope.get(name) {
-                return Some(typ);
+        for scope in self.bindings.iter().rev() {
+            if let Some(binding) = scope.get(name) {
+                return Some(&binding.typ);
             }
         }
         None
     }
 
+    fn get_binding(&self, name: &str) -> Option<&VarBinding> {
+        self.bindings
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+    }
+
+    fn resolve_proc(&self, name: &str) -> Option<&ProcMeta> {
+        self.proc_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+    }
+
     /// 进入过程作用域：初始化新的偏移量和类型映射。
     pub fn enter_proc(&mut self) {
         self.nesting_level += 1;
-        self.var_offsets.push(HashMap::new());
-        self.var_types.push(HashMap::new());
-        // 预留 $fp 和 $ra 各 4 字节
-        self.frame_sizes.push(8);
+        self.bindings.push(HashMap::new());
+        self.frame_sizes.push(0);
     }
 
     /// 退出过程作用域。
     pub fn exit_proc(&mut self) {
         self.nesting_level -= 1;
-        self.var_offsets.pop();
-        self.var_types.pop();
+        self.bindings.pop();
         self.frame_sizes.pop();
     }
 
@@ -334,35 +438,150 @@ impl MipsContext {
     }
 }
 
-/// 生成加载变量值到 `$v0` 的 MIPS 代码。
-fn emit_load(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, typ: &CodegenType) {
-    let instr = if matches!(typ, CodegenType::Char) { "lb" } else { "lw" };
-    if var_level == 0 {
-        ctx.emit(&format!("  la $t8, var_{}", name));
-        ctx.emit(&format!("  {} $v0, 0($t8)         # load global {}", instr, name));
+fn emit_add_to_reg(ctx: &mut MipsContext, reg: &str, delta: i32) {
+    if let Ok(imm) = i16::try_from(delta) {
+        ctx.emit(&format!("  addiu {}, {}, {}", reg, reg, imm));
     } else {
-        let off_str = if offset >= 0 {
-            format!("-{}", offset)
-        } else {
-            format!("{}", -offset)
-        };
-        ctx.emit(&format!("  {} $v0, {}({})       # load {}", instr, off_str, "$fp", name));
+        ctx.emit(&format!("  li $t9, {}", delta));
+        ctx.emit(&format!("  addu {}, {}, $t9", reg, reg));
     }
 }
 
-/// 生成将 `$v0` 存回变量的 MIPS 代码。
-fn emit_store(ctx: &mut MipsContext, offset: i32, var_level: usize, name: &str, typ: &CodegenType) {
-    let instr = if matches!(typ, CodegenType::Char) { "sb" } else { "sw" };
-    if var_level == 0 {
-        ctx.emit(&format!("  la $t8, var_{}", name));
-        ctx.emit(&format!("  {} $v0, 0($t8)         # store to global {}", instr, name));
-    } else {
-        let off_str = if offset >= 0 {
-            format!("-{}", offset)
+fn emit_adjust_sp(ctx: &mut MipsContext, delta: i32) {
+    emit_add_to_reg(ctx, "$sp", delta);
+}
+
+fn emit_frame_for_level(ctx: &mut MipsContext, target_level: usize) {
+    ctx.emit("  move $t0, $fp");
+    if target_level > ctx.nesting_level {
+        ctx.error("Invalid lexical level while following static chain");
+        return;
+    }
+    for _ in target_level..ctx.nesting_level {
+        ctx.emit("  lw $t0, 8($t0)          # follow static link");
+    }
+}
+
+fn emit_binding_address(name: &str, ctx: &mut MipsContext) -> CodegenType {
+    let binding = ctx.get_binding(name).cloned().unwrap_or_else(|| {
+        ctx.error(format!("Unknown variable '{}'", name));
+        VarBinding {
+            storage: Storage::Global(format!("var_{}", name)),
+            typ: CodegenType::Integer,
+        }
+    });
+
+    match binding.storage {
+        Storage::Global(label) => ctx.emit(&format!("  la $t0, {}", label)),
+        Storage::Local { level, offset } => {
+            emit_frame_for_level(ctx, level);
+            emit_add_to_reg(ctx, "$t0", -offset);
+        }
+        Storage::ValueParam { level, offset } => {
+            emit_frame_for_level(ctx, level);
+            emit_add_to_reg(ctx, "$t0", offset);
+        }
+        Storage::RefParam { level, offset } => {
+            emit_frame_for_level(ctx, level);
+            emit_add_to_reg(ctx, "$t0", offset);
+            ctx.emit("  lw $t0, 0($t0)          # dereference var parameter");
+        }
+    }
+    binding.typ
+}
+
+fn build_proc_scope(
+    proc_dec: &ProcDec,
+    parent_path: &[String],
+    parent_level: usize,
+    aliases: &HashMap<String, TypeBody>,
+    ctx: &mut MipsContext,
+) -> HashMap<String, ProcMeta> {
+    let mut scope = HashMap::new();
+    if let ProcDec::Defined(procs) = proc_dec {
+        for proc in procs {
+            let mut path = parent_path.to_vec();
+            path.push(proc.name.clone());
+            let label = format!("proc_{}", path.join("__"));
+            let level = parent_level + 1;
+            let mut params = Vec::new();
+            let mut offset = 12i32;
+
+            for param in &proc.params {
+                let typ = type_desig_to_codegen(&param.type_name, aliases, &mut ctx.errors);
+                let size = match typ.size_of() {
+                    Ok(size) => size,
+                    Err(msg) => {
+                        ctx.error(msg);
+                        4
+                    }
+                };
+                let slot_size = if param.is_var {
+                    4
+                } else {
+                    match typ.slot_size() {
+                        Ok(size) => size,
+                        Err(msg) => {
+                            ctx.error(msg);
+                            4
+                        }
+                    }
+                };
+
+                for name in &param.names {
+                    params.push(ParamLayout {
+                        name: name.clone(),
+                        is_var: param.is_var,
+                        typ: typ.clone(),
+                        size,
+                        slot_size,
+                        offset,
+                    });
+                    offset = match offset.checked_add(slot_size) {
+                        Some(next) => next,
+                        None => {
+                            ctx.error("Procedure parameter area overflow");
+                            offset
+                        }
+                    };
+                }
+            }
+
+            scope.insert(
+                proc.name.clone(),
+                ProcMeta {
+                    label,
+                    path,
+                    level,
+                    parent_level,
+                    params,
+                },
+            );
+        }
+    }
+    scope
+}
+
+fn bind_params(meta: &ProcMeta, ctx: &mut MipsContext) {
+    for param in &meta.params {
+        let storage = if param.is_var {
+            Storage::RefParam {
+                level: meta.level,
+                offset: param.offset,
+            }
         } else {
-            format!("{}", -offset)
+            Storage::ValueParam {
+                level: meta.level,
+                offset: param.offset,
+            }
         };
-        ctx.emit(&format!("  {} $v0, {}({})       # store to {}", instr, off_str, "$fp", name));
+        ctx.current_scope_mut().insert(
+            param.name.clone(),
+            VarBinding {
+                storage,
+                typ: param.typ.clone(),
+            },
+        );
     }
 }
 
@@ -382,7 +601,13 @@ pub fn compile(prog: &Program) -> Result<String, Vec<CompileError>> {
     ctx.emit_data("newline: .asciiz \"\\n\"");
     for var_dec in var_decs(&prog.decl.vars) {
         let resolved = type_desig_to_codegen(&var_dec.type_name, &global_aliases, &mut ctx.errors);
-        let size = resolved.size_of();
+        let size = match resolved.size_of() {
+            Ok(size) => size,
+            Err(msg) => {
+                ctx.error(msg);
+                4
+            }
+        };
         for name in &var_dec.names {
             if size == 4 {
                 ctx.emit_data(&format!("var_{}: .word 0", name));
@@ -390,14 +615,19 @@ pub fn compile(prog: &Program) -> Result<String, Vec<CompileError>> {
                 ctx.emit_data("  .align 2");
                 ctx.emit_data(&format!("var_{}: .space {}", name, size));
             }
-            // 全局变量偏移量统一为 0，层级为 0
-            ctx.current_scope_mut().insert(name.to_string(), (0, 0));
-            ctx.var_types
-                .last_mut()
-                .expect("var_types should never be empty")
-                .insert(name.to_string(), resolved.clone());
+            ctx.current_scope_mut().insert(
+                name.to_string(),
+                VarBinding {
+                    storage: Storage::Global(format!("var_{}", name)),
+                    typ: resolved.clone(),
+                },
+            );
         }
     }
+
+    let global_proc_scope =
+        build_proc_scope(&prog.decl.procs, &[], 0, &global_aliases, &mut ctx);
+    ctx.proc_scopes.push(global_proc_scope);
 
     // 生成 main 标号及序言
     ctx.emit("main:");
@@ -413,16 +643,19 @@ pub fn compile(prog: &Program) -> Result<String, Vec<CompileError>> {
         ));
     }
 
-    // 编译全局过程体
+    let main_epilogue = "main_exit".to_string();
+    ctx.epilogue_labels.push(main_epilogue.clone());
     compile_stm_list(&prog.body.stmts, &mut ctx);
 
-    // 尾言
+    ctx.emit_label(&main_epilogue);
     ctx.emit("  li $v0, 10             # exit syscall");
     ctx.emit("  syscall");
     ctx.emit("");
+    ctx.epilogue_labels.pop();
 
     // 编译过程声明
     compile_procs(&prog.decl.procs, &mut ctx, &global_aliases);
+    ctx.proc_scopes.pop();
 
     if ctx.errors.is_empty() {
         Ok(format!(
@@ -436,7 +669,7 @@ pub fn compile(prog: &Program) -> Result<String, Vec<CompileError>> {
 
 /// 递归编译过程声明。
 ///
-/// 每个过程生成独立的标号（`proc_<name>`）、栈帧管理序言/尾言和过程体。
+/// 每个过程生成词法作用域限定的标号、栈帧管理序言/尾言和过程体。
 /// 类型别名与父作用域合并，支持嵌套过程。
 fn compile_procs(
     proc_dec: &ProcDec,
@@ -445,17 +678,29 @@ fn compile_procs(
 ) {
     if let ProcDec::Defined(procs) = proc_dec {
         for proc in procs {
-            let label = format!("proc_{}", proc.name);
+            let meta = ctx
+                .proc_scopes
+                .last()
+                .and_then(|scope| scope.get(&proc.name))
+                .cloned()
+                .unwrap_or_else(|| {
+                    ctx.error(format!("Missing procedure metadata for '{}'", proc.name));
+                    ProcMeta {
+                        label: format!("proc_{}", proc.name),
+                        path: vec![proc.name.clone()],
+                        level: ctx.nesting_level + 1,
+                        parent_level: ctx.nesting_level,
+                        params: Vec::new(),
+                    }
+                });
             ctx.emit("");
-            ctx.emit_label(&label);
+            ctx.emit_label(&meta.label);
 
             ctx.enter_proc();
-
-            // 序言
-            ctx.emit("  addiu $sp, $sp, -8     # space for $fp + $ra");
-            ctx.emit("  sw $fp, 0($sp)         # save old $fp");
-            ctx.emit("  sw $ra, 4($sp)         # save return address");
-            ctx.emit("  move $fp, $sp          # frame pointer");
+            if ctx.nesting_level != meta.level {
+                ctx.error("Procedure lexical level mismatch");
+            }
+            bind_params(&meta, ctx);
 
             // 合并局部类型定义与继承的类型别名
             let mut proc_aliases = parent_aliases.clone();
@@ -463,21 +708,14 @@ fn compile_procs(
                 proc_aliases.insert(name, body);
             }
 
-            // 分配形参（在调用者的帧中，位于 $fp 之上）
-            let proc_level = ctx.nesting_level();
-            for (i, param) in proc.params.iter().enumerate() {
-                let param_type = type_desig_to_codegen(&param.type_name, &proc_aliases, &mut ctx.errors);
-                for name in &param.names {
-                    // 形参位于前 8 字节（$fp + $ra）之上
-                    let offset = -(i as i32 * 4 + 8);
-                    ctx.current_scope_mut()
-                        .insert(name.clone(), (offset, proc_level));
-                    ctx.var_types
-                        .last_mut()
-                        .expect("var_types should never be empty")
-                        .insert(name.clone(), param_type.clone());
-                }
-            }
+            let child_scope = build_proc_scope(
+                &proc.decl.procs,
+                &meta.path,
+                meta.level,
+                &proc_aliases,
+                ctx,
+            );
+            ctx.proc_scopes.push(child_scope);
 
             // 局部变量声明
             for var_dec in var_decs(&proc.decl.vars) {
@@ -488,28 +726,30 @@ fn compile_procs(
             }
 
             let frame = ctx.frame_size();
+
+            ctx.emit("  addiu $sp, $sp, -8     # space for $fp + $ra");
+            ctx.emit("  sw $fp, 0($sp)         # save old $fp");
+            ctx.emit("  sw $ra, 4($sp)         # save return address");
+            ctx.emit("  move $fp, $sp          # frame pointer");
             if frame > 0 {
-                ctx.emit(&format!("  addiu $sp, $sp, -{}     # locals", frame));
+                emit_adjust_sp(ctx, -frame);
             }
 
-            // 过程体
+            let epilogue = ctx.new_label("__snl_epilogue");
+            ctx.epilogue_labels.push(epilogue.clone());
             compile_stm_list(&proc.body.stmts, ctx);
 
-            // 尾言
-            if frame > 0 {
-                ctx.emit(&format!(
-                    "  addiu $sp, $sp, {}      # deallocate locals",
-                    frame
-                ));
-            }
+            ctx.emit_label(&epilogue);
+            ctx.emit("  move $sp, $fp          # discard locals");
             ctx.emit("  lw $fp, 0($sp)         # restore old $fp");
             ctx.emit("  lw $ra, 4($sp)         # restore $ra");
             ctx.emit("  addiu $sp, $sp, 8      # deallocate $fp + $ra slots");
             ctx.emit("  jr $ra                  # return");
+            ctx.epilogue_labels.pop();
 
-            // 嵌套过程
             compile_procs(&proc.decl.procs, ctx, &proc_aliases);
 
+            ctx.proc_scopes.pop();
             ctx.exit_proc();
         }
     }
@@ -522,28 +762,36 @@ fn compile_procs(
 /// 处理基础变量（全局/局部）、数组下标和记录字段。
 /// 返回最终元素的标量 CodegenType。
 fn emit_var_address(va: &VarAccess, ctx: &mut MipsContext) -> CodegenType {
-    let (offset, var_level) = ctx
-        .get_var_offset(&va.base)
-        .unwrap_or_else(|| {
-            ctx.error(format!("Unknown variable '{}'", va.base));
-            (0, 0)
-        });
-    let current_typ = ctx
-        .get_var_type(&va.base)
-        .cloned()
-        .unwrap_or_else(|| {
-            ctx.error(format!("No type for '{}'", va.base));
-            CodegenType::Integer
-        });
-
-    // 将基础地址加载到 $t0
-    if var_level == 0 {
-        ctx.emit(&format!("  la $t0, var_{}", va.base));
-    } else {
-        ctx.emit(&format!("  addiu $t0, $fp, {}", -offset));
-    }
-
+    let current_typ = emit_binding_address(&va.base, ctx);
     walk_selectors(&va.selector, ctx, current_typ)
+}
+
+fn emit_subtract_low_bound(ctx: &mut MipsContext, low: i64) {
+    if low == 0 {
+        return;
+    }
+    match i32::try_from(low) {
+        Ok(low) => emit_add_to_reg(ctx, "$v0", -low),
+        Err(_) => ctx.error("Array lower bound exceeds MIPS integer range"),
+    }
+}
+
+fn lookup_field(
+    typ: &CodegenType,
+    name: &str,
+    ctx: &mut MipsContext,
+) -> (i32, CodegenType) {
+    match typ.field_offset(name) {
+        Ok(Some(field)) => field,
+        Ok(None) => {
+            ctx.error(format!("Field '{}' not found in record", name));
+            (0, CodegenType::Integer)
+        }
+        Err(msg) => {
+            ctx.error(msg);
+            (0, CodegenType::Integer)
+        }
+    }
 }
 
 /// 遍历选择器链，生成代码更新 `$t0` 指向最终元素。
@@ -568,9 +816,7 @@ fn walk_selectors(
                 ctx.emit("  sw $t0, 0($sp)          # save base address");
                 compile_exp(exp, ctx);
                 // 下标从下界开始，若下界非零则减去偏移
-                if low_val != 0 {
-                    ctx.emit(&format!("  addiu $v0, $v0, {}", -low_val));
-                }
+                emit_subtract_low_bound(ctx, low_val);
                 let elem_size = elem_type.element_byte_size();
                 if elem_size == 4 {
                     ctx.emit("  sll $v0, $v0, 2");
@@ -581,23 +827,13 @@ fn walk_selectors(
                 current_typ = elem_type;
             }
             Selector::Field(name) => {
-                let (field_offset, field_type) = current_typ
-                    .field_offset(name)
-                    .unwrap_or_else(|| {
-                        ctx.error(format!("Field '{}' not found in record", name));
-                        (0, CodegenType::Integer)
-                    });
-                ctx.emit(&format!("  addiu $t0, $t0, {}", field_offset));
+                let (field_offset, field_type) = lookup_field(&current_typ, name, ctx);
+                emit_add_to_reg(ctx, "$t0", field_offset);
                 current_typ = field_type;
             }
             Selector::FieldSubscript(name, exp) => {
-                let (field_offset, field_type) = current_typ
-                    .field_offset(name)
-                    .unwrap_or_else(|| {
-                        ctx.error(format!("Field '{}' not found in record", name));
-                        (0, CodegenType::Integer)
-                    });
-                ctx.emit(&format!("  addiu $t0, $t0, {}", field_offset));
+                let (field_offset, field_type) = lookup_field(&current_typ, name, ctx);
+                emit_add_to_reg(ctx, "$t0", field_offset);
                 let (elem_type, low_val) = match &field_type {
                     CodegenType::Array(elem, low, _) => (*elem.clone(), *low),
                     _ => {
@@ -608,9 +844,7 @@ fn walk_selectors(
                 ctx.emit("  addiu $sp, $sp, -4");
                 ctx.emit("  sw $t0, 0($sp)          # save base address");
                 compile_exp(exp, ctx);
-                if low_val != 0 {
-                    ctx.emit(&format!("  addiu $v0, $v0, {}", -low_val));
-                }
+                emit_subtract_low_bound(ctx, low_val);
                 let elem_size = elem_type.element_byte_size();
                 if elem_size == 4 {
                     ctx.emit("  sll $v0, $v0, 2");
@@ -634,37 +868,197 @@ fn compile_stm_list(stmts: &[Stm], ctx: &mut MipsContext) {
     }
 }
 
+fn var_access_type(va: &VarAccess, ctx: &mut MipsContext) -> CodegenType {
+    let mut typ = ctx.get_var_type(&va.base).cloned().unwrap_or_else(|| {
+        ctx.error(format!("No type for '{}'", va.base));
+        CodegenType::Integer
+    });
+    for selector in &va.selector {
+        typ = match selector {
+            Selector::ArraySubscript(_) => match typ {
+                CodegenType::Array(elem, _, _) => *elem,
+                _ => {
+                    ctx.error("Array subscript on non-array type");
+                    CodegenType::Integer
+                }
+            },
+            Selector::Field(name) | Selector::FieldSubscript(name, _) => {
+                let (_, field_type) = lookup_field(&typ, name, ctx);
+                if matches!(selector, Selector::FieldSubscript(_, _)) {
+                    match field_type {
+                        CodegenType::Array(elem, _, _) => *elem,
+                        _ => {
+                            ctx.error("FieldSubscript on non-array field");
+                            CodegenType::Integer
+                        }
+                    }
+                } else {
+                    field_type
+                }
+            }
+        };
+    }
+    typ
+}
+
+fn exp_type(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
+    match exp {
+        Exp::Binary { .. } | Exp::IntConst(_, _) => CodegenType::Integer,
+        Exp::CharConst(_, _) => CodegenType::Char,
+        Exp::Variable(va, _) => var_access_type(va, ctx),
+    }
+}
+
+fn emit_copy_bytes(ctx: &mut MipsContext, size: i32) {
+    if size <= 0 {
+        ctx.error("Compound value has invalid storage size");
+        return;
+    }
+    let loop_label = ctx.new_label("copy_loop");
+    let end_label = ctx.new_label("copy_end");
+    ctx.emit(&format!("  li $t3, {}", size));
+    ctx.emit_label(&loop_label);
+    ctx.emit(&format!("  beqz $t3, {}", end_label));
+    ctx.emit("  lb $t4, 0($t1)");
+    ctx.emit("  sb $t4, 0($t2)");
+    ctx.emit("  addiu $t1, $t1, 1");
+    ctx.emit("  addiu $t2, $t2, 1");
+    ctx.emit("  addiu $t3, $t3, -1");
+    ctx.emit(&format!("  j {}", loop_label));
+    ctx.emit_label(&end_label);
+}
+
+fn compile_assign(lhs: &VarAccess, rhs: &Exp, ctx: &mut MipsContext) {
+    let rhs_type = exp_type(rhs, ctx);
+    if rhs_type.is_aggregate() {
+        let Exp::Variable(rhs_var, _) = rhs else {
+            ctx.error("Compound assignment requires a variable source");
+            return;
+        };
+        let source_type = emit_var_address(rhs_var, ctx);
+        let size = match source_type.size_of() {
+            Ok(size) => size,
+            Err(msg) => {
+                ctx.error(msg);
+                return;
+            }
+        };
+        ctx.emit("  addiu $sp, $sp, -4");
+        ctx.emit("  sw $t0, 0($sp)          # save compound rhs address");
+        let lhs_type = emit_var_address(lhs, ctx);
+        if lhs_type != source_type {
+            ctx.error("Compound assignment type mismatch during code generation");
+        }
+        ctx.emit("  move $t2, $t0          # destination address");
+        ctx.emit("  lw $t1, 0($sp)          # source address");
+        ctx.emit("  addiu $sp, $sp, 4");
+        emit_copy_bytes(ctx, size);
+        return;
+    }
+
+    compile_exp(rhs, ctx);
+    ctx.emit("  addiu $sp, $sp, -4");
+    ctx.emit("  sw $v0, 0($sp)          # save rhs value");
+    let lhs_type = emit_var_address(lhs, ctx);
+    ctx.emit("  lw $v0, 0($sp)          # restore rhs value");
+    ctx.emit("  addiu $sp, $sp, 4");
+    if lhs_type == CodegenType::Char {
+        ctx.emit("  sb $v0, 0($t0)");
+    } else {
+        ctx.emit("  sw $v0, 0($t0)");
+    }
+}
+
+fn compile_call(name: &str, args: &[Exp], ctx: &mut MipsContext) {
+    let meta = ctx.resolve_proc(name).cloned().unwrap_or_else(|| {
+        ctx.error(format!("Unknown procedure '{}'", name));
+        ProcMeta {
+            label: format!("proc_{}", name),
+            path: vec![name.to_string()],
+            level: ctx.nesting_level + 1,
+            parent_level: ctx.nesting_level,
+            params: Vec::new(),
+        }
+    });
+
+    if meta.params.len() != args.len() {
+        ctx.error(format!(
+            "Procedure '{}' expects {} arguments, got {}",
+            name,
+            meta.params.len(),
+            args.len()
+        ));
+    }
+
+    let mut argument_bytes = 0i32;
+    for (arg, param) in args.iter().zip(meta.params.iter()).rev() {
+        if param.is_var {
+            if let Exp::Variable(var, _) = arg {
+                emit_var_address(var, ctx);
+            } else {
+                ctx.error(format!(
+                    "Argument for var parameter '{}' is not a variable",
+                    param.name
+                ));
+                ctx.emit("  move $t0, $zero");
+            }
+            ctx.emit("  addiu $sp, $sp, -4");
+            ctx.emit("  sw $t0, 0($sp)          # var parameter address");
+        } else if param.typ.is_aggregate() {
+            if let Exp::Variable(var, _) = arg {
+                emit_var_address(var, ctx);
+            } else {
+                ctx.error(format!(
+                    "Value parameter '{}' requires a compound variable",
+                    param.name
+                ));
+                ctx.emit("  move $t0, $zero");
+            }
+            ctx.emit("  move $t1, $t0          # compound argument source");
+            emit_adjust_sp(ctx, -param.slot_size);
+            ctx.emit("  move $t2, $sp          # compound argument copy");
+            emit_copy_bytes(ctx, param.size);
+        } else {
+            let arg_type = compile_exp(arg, ctx);
+            ctx.emit("  addiu $sp, $sp, -4");
+            if arg_type == CodegenType::Char {
+                ctx.emit("  sb $v0, 0($sp)");
+            } else {
+                ctx.emit("  sw $v0, 0($sp)");
+            }
+        }
+        argument_bytes = match argument_bytes.checked_add(param.slot_size) {
+            Some(total) => total,
+            None => {
+                ctx.error("Call argument area overflow");
+                argument_bytes
+            }
+        };
+    }
+
+    if meta.parent_level == 0 {
+        ctx.emit("  move $t0, $zero          # top-level static link");
+    } else {
+        emit_frame_for_level(ctx, meta.parent_level);
+    }
+    ctx.emit("  addiu $sp, $sp, -4");
+    ctx.emit("  sw $t0, 0($sp)          # static link");
+    ctx.emit(&format!("  jal {}", meta.label));
+
+    let cleanup = match argument_bytes.checked_add(4) {
+        Some(size) => size,
+        None => {
+            ctx.error("Call cleanup size overflow");
+            4
+        }
+    };
+    emit_adjust_sp(ctx, cleanup);
+}
+
 /// 编译单条语句。
 fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
     match stm {
-        Stm::Assign { lhs, rhs, .. } => {
-            compile_exp(rhs, ctx);
-            // 无选择器的简单赋值
-            if lhs.selector.is_empty() {
-                if let Some((offset, var_level)) = ctx.get_var_offset(&lhs.base) {
-                    let is_char = ctx
-                        .get_var_type(&lhs.base)
-                        .is_some_and(|t| matches!(t, CodegenType::Char));
-                    let store_typ = if is_char { &CodegenType::Char } else { &CodegenType::Integer };
-                    emit_store(ctx, offset, var_level, &lhs.base, store_typ);
-                }
-            } else {
-                // 带选择器（数组下标/记录字段）的赋值：
-                // 1. 保存 RHS 值
-                // 2. 计算 LHS 地址
-                // 3. 恢复 RHS 值并存入计算出的地址
-                ctx.emit("  addiu $sp, $sp, -4");
-                ctx.emit("  sw $v0, 0($sp)          # save rhs value");
-                let lhs_type = emit_var_address(lhs, ctx);
-                ctx.emit("  lw $v0, 0($sp)          # restore rhs value");
-                ctx.emit("  addiu $sp, $sp, 4");
-                if lhs_type == CodegenType::Char {
-                    ctx.emit("  sb $v0, 0($t0)");
-                } else {
-                    ctx.emit("  sw $v0, 0($t0)");
-                }
-            }
-        }
+        Stm::Assign { lhs, rhs, .. } => compile_assign(lhs, rhs, ctx),
         Stm::If {
             cond,
             then_branch,
@@ -692,18 +1086,22 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
             ctx.emit_label(&end_label);
         }
         Stm::Read { var, .. } => {
-            let is_char = ctx
-                .get_var_type(var)
-                .is_some_and(|t| matches!(t, CodegenType::Char));
+            let is_char = ctx.get_var_type(var) == Some(&CodegenType::Char);
             if is_char {
                 ctx.emit("  li $v0, 12             # read char syscall");
             } else {
                 ctx.emit("  li $v0, 5              # read int syscall");
             }
             ctx.emit("  syscall");
-            if let Some((offset, var_level)) = ctx.get_var_offset(var) {
-                let store_typ = if is_char { &CodegenType::Char } else { &CodegenType::Integer };
-                emit_store(ctx, offset, var_level, var, store_typ);
+            ctx.emit("  addiu $sp, $sp, -4");
+            ctx.emit("  sw $v0, 0($sp)          # save input value");
+            emit_binding_address(var, ctx);
+            ctx.emit("  lw $v0, 0($sp)");
+            ctx.emit("  addiu $sp, $sp, 4");
+            if is_char {
+                ctx.emit("  sb $v0, 0($t0)");
+            } else {
+                ctx.emit("  sw $v0, 0($t0)");
             }
         }
         Stm::Write { exp, .. } => {
@@ -721,19 +1119,13 @@ fn compile_stm(stm: &Stm, ctx: &mut MipsContext) {
         }
         Stm::Return { exp, .. } => {
             let _ = compile_exp(exp, ctx);
-        }
-        Stm::Call { name, args, .. } => {
-            // 实参从右到左压栈（第一个实参最后压入，在栈顶）
-            for arg in args.iter().rev() {
-                let _ = compile_exp(arg, ctx);
-                ctx.emit("  addiu $sp, $sp, -4");
-                ctx.emit("  sw $v0, 0($sp)");
-            }
-            ctx.emit(&format!("  jal proc_{}", name));
-            if !args.is_empty() {
-                ctx.emit(&format!("  addiu $sp, $sp, {}", args.len() as i32 * 4));
+            if let Some(epilogue) = ctx.epilogue_labels.last().cloned() {
+                ctx.emit(&format!("  j {}", epilogue));
+            } else {
+                ctx.error("Return statement has no active epilogue");
             }
         }
+        Stm::Call { name, args, .. } => compile_call(name, args, ctx),
     }
 }
 
@@ -757,7 +1149,6 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
             match op {
                 BinOp::Add => ctx.emit("  addu $v0, $v0, $t0"),
                 BinOp::Sub => ctx.emit("  subu $v0, $v0, $t0"),
-                // mul 结果在 $t7 中，需再 move 到 $v0
                 BinOp::Mul => ctx.emit("  mul $v0, $v0, $t0"),
                 BinOp::Div => {
                     ctx.emit("  div $v0, $v0, $t0");
@@ -779,7 +1170,13 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
             CodegenType::Integer
         }
         Exp::IntConst(n, _) => {
-            ctx.emit(&format!("  li $v0, {}", n));
+            match i32::try_from(*n) {
+                Ok(value) => ctx.emit(&format!("  li $v0, {}", value)),
+                Err(_) => {
+                    ctx.error("Integer constant exceeds MIPS 32-bit range");
+                    ctx.emit("  li $v0, 0");
+                }
+            }
             CodegenType::Integer
         }
         Exp::CharConst(c, _) => {
@@ -787,30 +1184,15 @@ fn compile_exp(exp: &Exp, ctx: &mut MipsContext) -> CodegenType {
             CodegenType::Char
         }
         Exp::Variable(va, _) => {
-            if va.selector.is_empty() {
-                if let Some((offset, var_level)) = ctx.get_var_offset(&va.base) {
-                    let is_char = ctx
-                        .get_var_type(&va.base)
-                        .is_some_and(|t| matches!(t, CodegenType::Char));
-                    let load_typ = if is_char { &CodegenType::Char } else { &CodegenType::Integer };
-                    emit_load(ctx, offset, var_level, &va.base, load_typ);
-                    return if is_char {
-                        CodegenType::Char
-                    } else {
-                        CodegenType::Integer
-                    };
-                }
-                CodegenType::Integer
+            let final_typ = emit_var_address(va, ctx);
+            if final_typ.is_aggregate() {
+                ctx.error("Compound value used where a scalar expression is required");
+            } else if final_typ == CodegenType::Char {
+                ctx.emit("  lb $v0, 0($t0)");
             } else {
-                // 带选择器的变量：先计算地址，再加载值
-                let final_typ = emit_var_address(va, ctx);
-                if final_typ == CodegenType::Char {
-                    ctx.emit("  lb $v0, 0($t0)");
-                } else {
-                    ctx.emit("  lw $v0, 0($t0)");
-                }
-                final_typ
+                ctx.emit("  lw $v0, 0($t0)");
             }
+            final_typ
         }
     }
 }
@@ -1137,5 +1519,110 @@ mod tests {
             "Should allocate result in .data"
         );
         assert!(asm.contains(".word 0"), "Should initialize to zero");
+    }
+
+    #[test]
+    fn test_parameter_group_uses_distinct_slots() {
+        let asm = compile_source(
+            "program p procedure emit(integer a,b); begin write(a); write(b) end begin emit(1,2) end.",
+        );
+        assert!(asm.contains("addiu $t0, $t0, 12"));
+        assert!(asm.contains("addiu $t0, $t0, 16"));
+    }
+
+    #[test]
+    fn test_var_parameter_is_indirect() {
+        let asm = compile_source(
+            "program p var integer x; procedure inc(var integer a); begin a := a + 1 end begin inc(x) end.",
+        );
+        assert!(asm.contains("# var parameter address"));
+        assert!(asm.contains("# dereference var parameter"));
+    }
+
+    #[test]
+    fn test_compound_value_parameter_emits_full_copy() {
+        let asm = compile_source(
+            "program p var array[0..1] of integer x; procedure emit(array[0..1] of integer a); begin write(a[1]) end begin emit(x) end.",
+        );
+        assert!(asm.contains("# compound argument copy"));
+        assert!(asm.contains("copy_loop_"));
+        assert!(asm.contains("addiu $t0, $t0, 12"));
+    }
+
+    #[test]
+    fn test_nested_access_follows_static_link() {
+        let asm = compile_source(
+            "program p procedure outer(); var integer x; procedure inner(); begin x := x + 1 end begin inner() end begin outer() end.",
+        );
+        assert!(asm.contains("# follow static link"));
+    }
+
+    #[test]
+    fn test_nested_procedure_labels_include_lexical_path() {
+        let asm = compile_source(
+            "program p procedure a(); procedure helper(); begin write(1) end begin helper() end procedure b(); procedure helper(); begin write(2) end begin helper() end begin a(); b() end.",
+        );
+        assert!(asm.contains("proc_a__helper:"));
+        assert!(asm.contains("proc_b__helper:"));
+        assert!(asm.contains("jal proc_a__helper"));
+        assert!(asm.contains("jal proc_b__helper"));
+    }
+
+    #[test]
+    fn test_epilogue_label_does_not_collide_with_nested_procedure() {
+        let asm = compile_source(
+            "program p procedure outer(); procedure epilogue(); begin write(1) end begin epilogue() end begin outer() end.",
+        );
+        assert_eq!(asm.matches("proc_outer__epilogue:").count(), 1);
+    }
+
+    #[test]
+    fn test_compound_assignment_emits_full_copy() {
+        let asm = compile_source(
+            "program p var array[0..1] of integer a,b; begin b := a end.",
+        );
+        assert!(asm.contains("copy_loop_"));
+        assert!(asm.contains("save compound rhs address"));
+    }
+
+    #[test]
+    fn test_return_jumps_to_shared_epilogue() {
+        let asm = compile_source(
+            "program p procedure f(); begin return(1); write(2) end begin f() end.",
+        );
+        assert!(
+            asm.lines()
+                .any(|line| line.trim_start().starts_with("j __snl_epilogue_"))
+        );
+        assert_eq!(
+            asm.lines()
+                .filter(|line| line.starts_with("__snl_epilogue_") && line.ends_with(':'))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_invalid_array_bounds_fail_codegen() {
+        let mut lexer = Lexer::new();
+        let (tokens, errors) = lexer.tokenize(
+            "program p var array[5..1] of integer a; begin write(0) end.",
+        );
+        assert!(errors.is_empty());
+        let mut parser = RdParser::new(tokens);
+        let prog = parser.parse().expect("Parse should succeed");
+        assert!(compile(&prog).is_err());
+    }
+
+    #[test]
+    fn test_array_size_overflow_fails_codegen() {
+        let mut lexer = Lexer::new();
+        let (tokens, errors) = lexer.tokenize(
+            "program p var array[0..9223372036854775807] of integer a; begin write(0) end.",
+        );
+        assert!(errors.is_empty());
+        let mut parser = RdParser::new(tokens);
+        let prog = parser.parse().expect("Parse should succeed");
+        assert!(compile(&prog).is_err());
     }
 }

@@ -12,7 +12,6 @@ main:
   addiu $sp, $sp, -4     # space for $ra
   sw $ra, 0($sp)         # save return address
   move $fp, $sp          # frame pointer
-  addiu $sp, $sp, -4     # local variables
   li $v0, 38
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # save rhs value
@@ -126,13 +125,17 @@ main:
   addiu $sp, $sp, 4
   sw $v0, 0($t0)
   li $v0, 8
-  la $t8, var_n
-  sw $v0, 0($t8)         # store to global n
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_n
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_n
-  lw $v0, 0($t8)         # load global n
+  la $t0, var_n
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   subu $v0, $v0, $t0
@@ -141,17 +144,24 @@ main:
   li $v0, 0
   addiu $sp, $sp, -4
   sw $v0, 0($sp)
+  move $t0, $zero          # top-level static link
+  addiu $sp, $sp, -4
+  sw $t0, 0($sp)          # static link
   jal proc_msort
-  addiu $sp, $sp, 8
+  addiu $sp, $sp, 12
   li $v0, 0
-  la $t8, var_n
-  sw $v0, 0($t8)         # store to global n
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_n
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
 loop_0:
   li $v0, 8
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_n
-  lw $v0, 0($t8)         # load global n
+  la $t0, var_n
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
@@ -159,8 +169,8 @@ loop_0:
   la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  la $t8, var_n
-  lw $v0, 0($t8)         # load global n
+  la $t0, var_n
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -175,15 +185,20 @@ loop_0:
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_n
-  lw $v0, 0($t8)         # load global n
+  la $t0, var_n
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
-  la $t8, var_n
-  sw $v0, 0($t8)         # store to global n
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_n
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   j loop_0
 endloop_1:
+main_exit:
   li $v0, 10             # exit syscall
   syscall
 
@@ -193,46 +208,80 @@ proc_merge:
   sw $fp, 0($sp)         # save old $fp
   sw $ra, 4($sp)         # save return address
   move $fp, $sp          # frame pointer
-  addiu $sp, $sp, -20     # locals
-  lw $v0, 8($fp)       # load lo
-  sw $v0, -8($fp)       # store to i
+  addiu $sp, $sp, -12
+  move $t0, $fp
+  addiu $t0, $t0, 12
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, 12($fp)       # load mid
+  move $t0, $fp
+  addiu $t0, $t0, 16
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
-  sw $v0, -12($fp)       # store to j
-  lw $v0, 8($fp)       # load lo
-  sw $v0, -16($fp)       # store to k
-loop_2:
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -8
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  move $t0, $fp
+  addiu $t0, $t0, 12
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+loop_3:
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, 16($fp)       # load hi
+  move $t0, $fp
+  addiu $t0, $t0, 20
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, -16($fp)       # load k
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
-  beqz $v0, endloop_3
-  lw $v0, -8($fp)       # load i
+  beqz $v0, endloop_4
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, 12($fp)       # load mid
+  move $t0, $fp
+  addiu $t0, $t0, 16
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
-  beqz $v0, else_4
+  beqz $v0, else_5
   la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  lw $v0, -12($fp)       # load j
+  move $t0, $fp
+  addiu $t0, $t0, -8
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -243,7 +292,9 @@ loop_2:
   la $t0, var_tmp
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  lw $v0, -16($fp)       # load k
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -254,81 +305,39 @@ loop_2:
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, -12($fp)       # load j
+  move $t0, $fp
+  addiu $t0, $t0, -8
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
-  sw $v0, -12($fp)       # store to j
-  j endif_5
-else_4:
-  lw $v0, -12($fp)       # load j
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)          # push right
-  lw $v0, 16($fp)       # load hi
-  lw $t0, 0($sp)          # pop right
-  addiu $sp, $sp, 4
-  slt $v0, $v0, $t0
-  beqz $v0, else_6
-  la $t0, var_a
-  addiu $sp, $sp, -4
-  sw $t0, 0($sp)          # save base address
-  lw $v0, -8($fp)       # load i
-  sll $v0, $v0, 2
-  lw $t0, 0($sp)          # restore base address
-  addiu $sp, $sp, 4
-  addu $t0, $t0, $v0
-  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # save rhs value
-  la $t0, var_tmp
-  addiu $sp, $sp, -4
-  sw $t0, 0($sp)          # save base address
-  lw $v0, -16($fp)       # load k
-  sll $v0, $v0, 2
-  lw $t0, 0($sp)          # restore base address
-  addiu $sp, $sp, 4
-  addu $t0, $t0, $v0
+  move $t0, $fp
+  addiu $t0, $t0, -8
   lw $v0, 0($sp)          # restore rhs value
   addiu $sp, $sp, 4
   sw $v0, 0($t0)
-  li $v0, 1
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)          # push right
-  lw $v0, -8($fp)       # load i
-  lw $t0, 0($sp)          # pop right
-  addiu $sp, $sp, 4
-  addu $v0, $v0, $t0
-  sw $v0, -8($fp)       # store to i
-  j endif_7
-else_6:
-  la $t0, var_a
-  addiu $sp, $sp, -4
-  sw $t0, 0($sp)          # save base address
-  lw $v0, -12($fp)       # load j
-  sll $v0, $v0, 2
-  lw $t0, 0($sp)          # restore base address
-  addiu $sp, $sp, 4
-  addu $t0, $t0, $v0
+  j endif_6
+else_5:
+  move $t0, $fp
+  addiu $t0, $t0, -8
   lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t0, var_a
-  addiu $sp, $sp, -4
-  sw $t0, 0($sp)          # save base address
-  lw $v0, -8($fp)       # load i
-  sll $v0, $v0, 2
-  lw $t0, 0($sp)          # restore base address
-  addiu $sp, $sp, 4
-  addu $t0, $t0, $v0
+  move $t0, $fp
+  addiu $t0, $t0, 20
   lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
-  beqz $v0, else_8
+  beqz $v0, else_7
   la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  lw $v0, -8($fp)       # load i
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -339,7 +348,9 @@ else_6:
   la $t0, var_tmp
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  lw $v0, -16($fp)       # load k
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -350,77 +361,55 @@ else_6:
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, -8($fp)       # load i
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
-  sw $v0, -8($fp)       # store to i
-  j endif_9
-else_8:
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  j endif_8
+else_7:
   la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  lw $v0, -12($fp)       # load j
+  move $t0, $fp
+  addiu $t0, $t0, -8
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
   addu $t0, $t0, $v0
   lw $v0, 0($t0)
   addiu $sp, $sp, -4
-  sw $v0, 0($sp)          # save rhs value
-  la $t0, var_tmp
+  sw $v0, 0($sp)          # push right
+  la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  lw $v0, -16($fp)       # load k
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
   addu $t0, $t0, $v0
-  lw $v0, 0($sp)          # restore rhs value
-  addiu $sp, $sp, 4
-  sw $v0, 0($t0)
-  li $v0, 1
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)          # push right
-  lw $v0, -12($fp)       # load j
-  lw $t0, 0($sp)          # pop right
-  addiu $sp, $sp, 4
-  addu $v0, $v0, $t0
-  sw $v0, -12($fp)       # store to j
-endif_9:
-endif_7:
-endif_5:
-  li $v0, 1
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)          # push right
-  lw $v0, -16($fp)       # load k
-  lw $t0, 0($sp)          # pop right
-  addiu $sp, $sp, 4
-  addu $v0, $v0, $t0
-  sw $v0, -16($fp)       # store to k
-  j loop_2
-endloop_3:
-  lw $v0, 8($fp)       # load lo
-  sw $v0, -16($fp)       # store to k
-loop_10:
-  li $v0, 1
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)          # push right
-  lw $v0, 16($fp)       # load hi
-  lw $t0, 0($sp)          # pop right
-  addiu $sp, $sp, 4
-  addu $v0, $v0, $t0
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)          # push right
-  lw $v0, -16($fp)       # load k
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
-  beqz $v0, endloop_11
-  la $t0, var_tmp
+  beqz $v0, else_9
+  la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  lw $v0, -16($fp)       # load k
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -428,10 +417,12 @@ loop_10:
   lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # save rhs value
-  la $t0, var_a
+  la $t0, var_tmp
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  lw $v0, -16($fp)       # load k
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -442,14 +433,159 @@ loop_10:
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, -16($fp)       # load k
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
-  sw $v0, -16($fp)       # store to k
-  j loop_10
-endloop_11:
-  addiu $sp, $sp, 20      # deallocate locals
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  j endif_10
+else_9:
+  la $t0, var_a
+  addiu $sp, $sp, -4
+  sw $t0, 0($sp)          # save base address
+  move $t0, $fp
+  addiu $t0, $t0, -8
+  lw $v0, 0($t0)
+  sll $v0, $v0, 2
+  lw $t0, 0($sp)          # restore base address
+  addiu $sp, $sp, 4
+  addu $t0, $t0, $v0
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_tmp
+  addiu $sp, $sp, -4
+  sw $t0, 0($sp)          # save base address
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
+  sll $v0, $v0, 2
+  lw $t0, 0($sp)          # restore base address
+  addiu $sp, $sp, 4
+  addu $t0, $t0, $v0
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  li $v0, 1
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # push right
+  move $t0, $fp
+  addiu $t0, $t0, -8
+  lw $v0, 0($t0)
+  lw $t0, 0($sp)          # pop right
+  addiu $sp, $sp, 4
+  addu $v0, $v0, $t0
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -8
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+endif_10:
+endif_8:
+endif_6:
+  li $v0, 1
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # push right
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
+  lw $t0, 0($sp)          # pop right
+  addiu $sp, $sp, 4
+  addu $v0, $v0, $t0
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  j loop_3
+endloop_4:
+  move $t0, $fp
+  addiu $t0, $t0, 12
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+loop_11:
+  li $v0, 1
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # push right
+  move $t0, $fp
+  addiu $t0, $t0, 20
+  lw $v0, 0($t0)
+  lw $t0, 0($sp)          # pop right
+  addiu $sp, $sp, 4
+  addu $v0, $v0, $t0
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # push right
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
+  lw $t0, 0($sp)          # pop right
+  addiu $sp, $sp, 4
+  slt $v0, $v0, $t0
+  beqz $v0, endloop_12
+  la $t0, var_tmp
+  addiu $sp, $sp, -4
+  sw $t0, 0($sp)          # save base address
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
+  sll $v0, $v0, 2
+  lw $t0, 0($sp)          # restore base address
+  addiu $sp, $sp, 4
+  addu $t0, $t0, $v0
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_a
+  addiu $sp, $sp, -4
+  sw $t0, 0($sp)          # save base address
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
+  sll $v0, $v0, 2
+  lw $t0, 0($sp)          # restore base address
+  addiu $sp, $sp, 4
+  addu $t0, $t0, $v0
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  li $v0, 1
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # push right
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($t0)
+  lw $t0, 0($sp)          # pop right
+  addiu $sp, $sp, 4
+  addu $v0, $v0, $t0
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -12
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  j loop_11
+endloop_12:
+__snl_epilogue_2:
+  move $sp, $fp          # discard locals
   lw $fp, 0($sp)         # restore old $fp
   lw $ra, 4($sp)         # restore $ra
   addiu $sp, $sp, 8      # deallocate $fp + $ra slots
@@ -460,22 +596,30 @@ proc_msort:
   sw $fp, 0($sp)         # save old $fp
   sw $ra, 4($sp)         # save return address
   move $fp, $sp          # frame pointer
-  addiu $sp, $sp, -12     # locals
-  lw $v0, 12($fp)       # load hi
+  addiu $sp, $sp, -4
+  move $t0, $fp
+  addiu $t0, $t0, 16
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, 8($fp)       # load lo
+  move $t0, $fp
+  addiu $t0, $t0, 12
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
-  beqz $v0, else_12
+  beqz $v0, else_14
   li $v0, 2
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, 12($fp)       # load hi
+  move $t0, $fp
+  addiu $t0, $t0, 16
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, 8($fp)       # load lo
+  move $t0, $fp
+  addiu $t0, $t0, 12
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
@@ -483,46 +627,82 @@ proc_msort:
   addiu $sp, $sp, 4
   div $v0, $v0, $t0
   mflo $v0
-  sw $v0, -8($fp)       # store to mid
-  lw $v0, -8($fp)       # load mid
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)
-  lw $v0, 8($fp)       # load lo
+  move $t0, $fp
+  addiu $t0, $t0, 12
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)
+  move $t0, $zero          # top-level static link
+  addiu $sp, $sp, -4
+  sw $t0, 0($sp)          # static link
   jal proc_msort
-  addiu $sp, $sp, 8
-  lw $v0, 12($fp)       # load hi
+  addiu $sp, $sp, 12
+  move $t0, $fp
+  addiu $t0, $t0, 16
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  lw $v0, -8($fp)       # load mid
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
   addiu $sp, $sp, -4
   sw $v0, 0($sp)
+  move $t0, $zero          # top-level static link
+  addiu $sp, $sp, -4
+  sw $t0, 0($sp)          # static link
   jal proc_msort
-  addiu $sp, $sp, 8
-  lw $v0, 12($fp)       # load hi
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)
-  lw $v0, -8($fp)       # load mid
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)
-  lw $v0, 8($fp)       # load lo
-  addiu $sp, $sp, -4
-  sw $v0, 0($sp)
-  jal proc_merge
   addiu $sp, $sp, 12
-  j endif_13
-else_12:
+  move $t0, $fp
+  addiu $t0, $t0, 16
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)
+  move $t0, $fp
+  addiu $t0, $t0, 12
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)
+  move $t0, $zero          # top-level static link
+  addiu $sp, $sp, -4
+  sw $t0, 0($sp)          # static link
+  jal proc_merge
+  addiu $sp, $sp, 16
+  j endif_15
+else_14:
   li $v0, 0
-  sw $v0, -8($fp)       # store to mid
-endif_13:
-  addiu $sp, $sp, 12      # deallocate locals
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  move $t0, $fp
+  addiu $t0, $t0, -4
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+endif_15:
+__snl_epilogue_13:
+  move $sp, $fp          # discard locals
   lw $fp, 0($sp)         # restore old $fp
   lw $ra, 4($sp)         # restore $ra
   addiu $sp, $sp, 8      # deallocate $fp + $ra slots

@@ -15,7 +15,6 @@ main:
   addiu $sp, $sp, -4     # space for $ra
   sw $ra, 0($sp)         # save return address
   move $fp, $sp          # frame pointer
-  addiu $sp, $sp, -4     # local variables
   li $v0, 2
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # save rhs value
@@ -157,26 +156,46 @@ main:
   addiu $sp, $sp, 4
   sw $v0, 0($t0)
   li $v0, 38
-  la $t8, var_target
-  sw $v0, 0($t8)         # store to global target
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_target
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   li $v0, 0
-  la $t8, var_lo
-  sw $v0, 0($t8)         # store to global lo
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_lo
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   li $v0, 9
-  la $t8, var_hi
-  sw $v0, 0($t8)         # store to global hi
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_hi
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   li $v0, 0
-  la $t8, var_found
-  sw $v0, 0($t8)         # store to global found
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_found
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   li $v0, 0
-  la $t8, var_result
-  sw $v0, 0($t8)         # store to global result
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_result
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
 loop_0:
   li $v0, 0
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_found
-  lw $v0, 0($t8)         # load global found
+  la $t0, var_found
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   beq $v0, $t0, eq_true_2
@@ -186,12 +205,12 @@ eq_true_2:
   li $v0, 1
 eq_end_3:
   beqz $v0, endloop_1
-  la $t8, var_hi
-  lw $v0, 0($t8)         # load global hi
+  la $t0, var_hi
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_lo
-  lw $v0, 0($t8)         # load global lo
+  la $t0, var_lo
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
@@ -199,12 +218,12 @@ eq_end_3:
   li $v0, 2
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_hi
-  lw $v0, 0($t8)         # load global hi
+  la $t0, var_hi
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_lo
-  lw $v0, 0($t8)         # load global lo
+  la $t0, var_lo
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
@@ -212,17 +231,21 @@ eq_end_3:
   addiu $sp, $sp, 4
   div $v0, $v0, $t0
   mflo $v0
-  la $t8, var_mid
-  sw $v0, 0($t8)         # store to global mid
-  la $t8, var_target
-  lw $v0, 0($t8)         # load global target
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_mid
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  la $t0, var_target
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
   la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  la $t8, var_mid
-  lw $v0, 0($t8)         # load global mid
+  la $t0, var_mid
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -235,25 +258,33 @@ eq_end_3:
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_mid
-  lw $v0, 0($t8)         # load global mid
+  la $t0, var_mid
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   addu $v0, $v0, $t0
-  la $t8, var_lo
-  sw $v0, 0($t8)         # store to global lo
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_lo
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   j endif_7
 else_6:
-  la $t8, var_lo
-  lw $v0, 0($t8)         # load global lo
-  la $t8, var_lo
-  sw $v0, 0($t8)         # store to global lo
+  la $t0, var_lo
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_lo
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
 endif_7:
   la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  la $t8, var_mid
-  lw $v0, 0($t8)         # load global mid
+  la $t0, var_mid
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -261,8 +292,8 @@ endif_7:
   lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_target
-  lw $v0, 0($t8)         # load global target
+  la $t0, var_target
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
@@ -270,29 +301,37 @@ endif_7:
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_mid
-  lw $v0, 0($t8)         # load global mid
+  la $t0, var_mid
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   subu $v0, $v0, $t0
-  la $t8, var_hi
-  sw $v0, 0($t8)         # store to global hi
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_hi
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   j endif_9
 else_8:
-  la $t8, var_hi
-  lw $v0, 0($t8)         # load global hi
-  la $t8, var_hi
-  sw $v0, 0($t8)         # store to global hi
+  la $t0, var_hi
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_hi
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
 endif_9:
-  la $t8, var_target
-  lw $v0, 0($t8)         # load global target
+  la $t0, var_target
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
   la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  la $t8, var_mid
-  lw $v0, 0($t8)         # load global mid
+  la $t0, var_mid
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -308,30 +347,42 @@ eq_true_12:
 eq_end_13:
   beqz $v0, else_10
   li $v0, 1
-  la $t8, var_found
-  sw $v0, 0($t8)         # store to global found
-  la $t8, var_mid
-  lw $v0, 0($t8)         # load global mid
-  la $t8, var_result
-  sw $v0, 0($t8)         # store to global result
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_found
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  la $t0, var_mid
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_result
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   j endif_11
 else_10:
-  la $t8, var_result
-  lw $v0, 0($t8)         # load global result
-  la $t8, var_result
-  sw $v0, 0($t8)         # store to global result
+  la $t0, var_result
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_result
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
 endif_11:
   j endif_5
 else_4:
-  la $t8, var_target
-  lw $v0, 0($t8)         # load global target
+  la $t0, var_target
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
   la $t0, var_a
   addiu $sp, $sp, -4
   sw $t0, 0($sp)          # save base address
-  la $t8, var_lo
-  lw $v0, 0($t8)         # load global lo
+  la $t0, var_lo
+  lw $v0, 0($t0)
   sll $v0, $v0, 2
   lw $t0, 0($sp)          # restore base address
   addiu $sp, $sp, 4
@@ -347,46 +398,66 @@ eq_true_16:
 eq_end_17:
   beqz $v0, else_14
   li $v0, 1
-  la $t8, var_found
-  sw $v0, 0($t8)         # store to global found
-  la $t8, var_lo
-  lw $v0, 0($t8)         # load global lo
-  la $t8, var_result
-  sw $v0, 0($t8)         # store to global result
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_found
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
+  la $t0, var_lo
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_result
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   j endif_15
 else_14:
   li $v0, 2
-  la $t8, var_found
-  sw $v0, 0($t8)         # store to global found
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_found
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
 endif_15:
 endif_5:
-  la $t8, var_lo
-  lw $v0, 0($t8)         # load global lo
+  la $t0, var_lo
+  lw $v0, 0($t0)
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_hi
-  lw $v0, 0($t8)         # load global hi
+  la $t0, var_hi
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   slt $v0, $v0, $t0
   beqz $v0, else_18
   li $v0, 2
-  la $t8, var_found
-  sw $v0, 0($t8)         # store to global found
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_found
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
   j endif_19
 else_18:
-  la $t8, var_found
-  lw $v0, 0($t8)         # load global found
-  la $t8, var_found
-  sw $v0, 0($t8)         # store to global found
+  la $t0, var_found
+  lw $v0, 0($t0)
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_found
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
 endif_19:
   j loop_0
 endloop_1:
   li $v0, 1
   addiu $sp, $sp, -4
   sw $v0, 0($sp)          # push right
-  la $t8, var_found
-  lw $v0, 0($t8)         # load global found
+  la $t0, var_found
+  lw $v0, 0($t0)
   lw $t0, 0($sp)          # pop right
   addiu $sp, $sp, 4
   beq $v0, $t0, eq_true_22
@@ -396,16 +467,16 @@ eq_true_22:
   li $v0, 1
 eq_end_23:
   beqz $v0, else_20
-  la $t8, var_target
-  lw $v0, 0($t8)         # load global target
+  la $t0, var_target
+  lw $v0, 0($t0)
   move $a0, $v0          # value to print
   li $v0, 1              # print int syscall
   syscall
   la $a0, newline
   li $v0, 4              # print string syscall
   syscall
-  la $t8, var_result
-  lw $v0, 0($t8)         # load global result
+  la $t0, var_result
+  lw $v0, 0($t0)
   move $a0, $v0          # value to print
   li $v0, 1              # print int syscall
   syscall
@@ -415,9 +486,14 @@ eq_end_23:
   j endif_21
 else_20:
   li $v0, 0
-  la $t8, var_result
-  sw $v0, 0($t8)         # store to global result
+  addiu $sp, $sp, -4
+  sw $v0, 0($sp)          # save rhs value
+  la $t0, var_result
+  lw $v0, 0($sp)          # restore rhs value
+  addiu $sp, $sp, 4
+  sw $v0, 0($t0)
 endif_21:
+main_exit:
   li $v0, 10             # exit syscall
   syscall
 

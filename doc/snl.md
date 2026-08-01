@@ -95,7 +95,7 @@ end.
 ### 5.1 程序结构
 
 ```
-1)  Program         ::= ProgramHead DeclarePart ProgramBody
+1)  Program         ::= ProgramHead DeclarePart ProgramBody .
 2)  ProgramHead     ::= PROGRAM ProgramName
 3)  ProgramName     ::= ID
 4)  DeclarePart     ::= TypeDec VarDec ProcDec

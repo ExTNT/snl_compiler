@@ -7,7 +7,6 @@ main:
   addiu $sp, $sp, -4     # space for $ra
   sw $ra, 0($sp)         # save return address
   move $fp, $sp          # frame pointer
-  addiu $sp, $sp, -4     # local variables
   li $v0, 42
   move $a0, $v0          # value to print
   li $v0, 1              # print int syscall
@@ -15,6 +14,7 @@ main:
   la $a0, newline
   li $v0, 4              # print string syscall
   syscall
+main_exit:
   li $v0, 10             # exit syscall
   syscall
 

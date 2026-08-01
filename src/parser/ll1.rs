@@ -55,7 +55,10 @@ impl<'a> Ll1Parser<'a> {
         self.pos = 0;
         self.errors.clear();
 
-        let mut stack: Vec<StackItem> = vec![StackItem::N(self.grammar.start)];
+        let mut stack: Vec<StackItem> = vec![
+            StackItem::T(TokenKind::Eof),
+            StackItem::N(self.grammar.start),
+        ];
 
         while let Some(item) = stack.pop() {
             match item {
@@ -159,7 +162,7 @@ mod tests {
                 let source = "program p begin write(1) end.";
                 let mut lexer = Lexer::new();
                 let (_tokens, _) = lexer.tokenize(source);
-                assert!(parser.grammar.productions.len() > 0);
+                assert!(!parser.grammar.productions.is_empty());
             }
             Err(conflicts) => {
                 for c in &conflicts {
@@ -184,6 +187,22 @@ mod tests {
             "LL(1) parse should succeed: {:?}",
             parser.errors()
         );
+    }
+
+    #[test]
+    fn test_ll1_rejects_missing_final_dot() {
+        let mut parser = Ll1Parser::new().expect("LL(1) grammar should have no conflicts");
+        let mut lexer = Lexer::new();
+        let (tokens, _) = lexer.tokenize("program p begin write(1) end");
+        assert!(!parser.parse(tokens));
+    }
+
+    #[test]
+    fn test_ll1_rejects_trailing_tokens() {
+        let mut parser = Ll1Parser::new().expect("LL(1) grammar should have no conflicts");
+        let mut lexer = Lexer::new();
+        let (tokens, _) = lexer.tokenize("program p begin write(1) end. trailing");
+        assert!(!parser.parse(tokens));
     }
 
     #[test]
@@ -320,7 +339,7 @@ mod tests {
     #[test]
     fn test_ll1_first_follow_sets() {
         let parser = Ll1Parser::new().expect("LL(1) grammar should have no conflicts");
-        assert!(parser.grammar.productions.len() > 0);
+        assert!(!parser.grammar.productions.is_empty());
         assert!(!parser.table.entries.is_empty());
     }
 }

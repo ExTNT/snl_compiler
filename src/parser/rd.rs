@@ -109,13 +109,15 @@ impl<'a> RdParser<'a> {
         }
     }
 
-    // ===== 1. Program ::= ProgramHead DeclarePart ProgramBody =====
+    // ===== 1. Program ::= ProgramHead DeclarePart ProgramBody . =====
 
     fn parse_program(&mut self) -> Option<Program> {
         let loc = self.loc();
         let name = self.parse_program_head()?;
         let decl = self.parse_declare_part();
         let body = self.parse_program_body();
+        self.match_token(TokenKind::Dot);
+        self.match_token(TokenKind::Eof);
         Some(Program {
             name,
             decl,
@@ -595,6 +597,9 @@ impl<'a> RdParser<'a> {
 
     fn parse_param_list(&mut self) -> Vec<ParamDef> {
         let mut params = Vec::new();
+        if *self.peek_kind() == TokenKind::RParent {
+            return params;
+        }
         self.parse_param_dec_list(&mut params);
         params
     }
@@ -1361,17 +1366,29 @@ mod tests {
 
     #[test]
     fn test_procedure_no_params() {
-        let source = "program p procedure q(integer dummy); begin write(0) end begin q(1) end.";
+        let source = "program p procedure q(); begin write(0) end begin q() end.";
         let (prog, errors) = parse(source);
         assert!(errors.is_empty());
         let prog = prog.expect("Expected a program");
         match &prog.decl.procs {
             ProcDec::Defined(procs) => {
                 assert_eq!(procs[0].name, "q");
-                assert_eq!(procs[0].params.len(), 1);
+                assert!(procs[0].params.is_empty());
             }
             _ => panic!("Expected procedure"),
         }
+    }
+
+    #[test]
+    fn test_program_requires_final_dot() {
+        let (_prog, errors) = parse("program p begin write(1) end");
+        assert!(errors.iter().any(|e| e.msg.contains("Expected .")));
+    }
+
+    #[test]
+    fn test_program_rejects_trailing_tokens() {
+        let (_prog, errors) = parse("program p begin write(1) end. trailing");
+        assert!(errors.iter().any(|e| e.msg.contains("Expected EOF")));
     }
 
     #[test]

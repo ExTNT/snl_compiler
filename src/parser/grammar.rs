@@ -97,8 +97,8 @@ pub fn encode_grammar() -> Grammar {
 
     #[rustfmt::skip]
     let prods = vec![
-        // Program ::= PROGRAM ID DeclarePart ProgramBody
-        prod(NProgram, vec![T(TK::Program), T(ident.clone()), N(DeclarePart), N(ProgramBody)]),
+        // Program ::= PROGRAM ID DeclarePart ProgramBody .
+        prod(NProgram, vec![T(TK::Program), T(ident.clone()), N(DeclarePart), N(ProgramBody), T(TK::Dot)]),
 
         // DeclarePart ::= TypeDec VarDec ProcDec
         prod(DeclarePart, vec![N(TypeDec), N(VarDec), N(ProcDec)]),
